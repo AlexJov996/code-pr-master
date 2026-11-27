@@ -33,3 +33,14 @@ describe("exitCodeFor", () => {
     expect(exitCodeFor(mk(["Critical"]), "none")).toBe(0);
   });
 });
+
+describe("parseRepo", () => {
+  test("accepts owner/name and full GitHub URLs", async () => {
+    const { parseRepo } = await import("../../src/cli/options.js");
+    expect(parseRepo("acme/platform")).toEqual({ owner: "acme", repo: "platform" });
+    expect(parseRepo("https://github.com/acme/platform")).toEqual({ owner: "acme", repo: "platform" });
+    expect(parseRepo("https://github.com/acme/platform.git")).toEqual({ owner: "acme", repo: "platform" });
+    expect(parseRepo("git@github.com:acme/platform.git")).toEqual({ owner: "acme", repo: "platform" });
+    expect(() => parseRepo("nope")).toThrow(/owner\/name/);
+  });
+});

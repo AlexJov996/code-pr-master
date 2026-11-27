@@ -66,3 +66,35 @@ describe("instructionsForPath", () => {
     expect(instructionsForPath("README.md", rules)).toEqual([]);
   });
 });
+
+describe("triage config", () => {
+  test("defaults to no saved views and the standard CODEOWNERS locations", () => {
+    const cfg = parseConfig("");
+    expect(cfg.triage.saved_views).toEqual([]);
+    expect(cfg.triage.ai_assessment).toBe(false);
+  });
+
+  test("parses saved views with filters", () => {
+    const cfg = parseConfig(`
+triage:
+  ai_assessment: true
+  saved_views:
+    - id: security-watch
+      name: Security watch
+      filter:
+        risk: [High]
+        paths: ["auth/**"]
+    - id: release-train
+      name: Release train
+      filter:
+        base_branches: ["release/*"]
+`);
+    expect(cfg.triage.ai_assessment).toBe(true);
+    expect(cfg.triage.saved_views[0]).toEqual({ id: "security-watch", name: "Security watch", filter: { risk: ["High"], paths: ["auth/**"] } });
+    expect(cfg.triage.saved_views[1]!.filter.base_branches).toEqual(["release/*"]);
+  });
+
+  test("rejects an invalid risk level in a saved view", () => {
+    expect(() => parseConfig("triage:\n  saved_views:\n    - id: x\n      name: X\n      filter:\n        risk: [Huge]\n")).toThrow(/risk/);
+  });
+});

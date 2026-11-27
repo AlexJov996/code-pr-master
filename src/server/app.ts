@@ -1,12 +1,24 @@
 import { Webhooks } from "@octokit/webhooks";
 import { Hono } from "hono";
+import { renderBoard } from "../triage/board.js";
+import { applyView, BUILT_IN_VIEWS, countsByView, groupByPriority, resolveView, type SavedView, type TriageItem } from "../triage/views.js";
+
+export interface TriageDeps {
+  /** Load scored items for "owner/name". */
+  load: (repo: string) => Promise<TriageItem[]>;
+  me?: string;
+  savedViews?: SavedView[];
+}
 
 export interface ServerDeps {
   webhookSecret: string;
   onPullRequest: (payload: any) => Promise<void>;
   onIssueComment: (payload: any) => Promise<void>;
+  triage?: TriageDeps;
   log?: (msg: string) => void;
 }
+
+const REPO_RE = /^[\w.-]+\/[\w.-]+$/;
 
 const HANDLED = new Set(["pull_request", "issue_comment"]);
 
@@ -33,6 +45,30 @@ export function createApp(deps: ServerDeps) {
     });
     return c.text("accepted", 202);
   });
+
+  if (deps.triage) {
+    const t = deps.triage;
+    const saved = t.savedViews ?? [];
+    const views = [...BUILT_IN_VIEWS, ...saved.map((v) => ({ ...v, builtIn: false }))];
+    const prepare = async (repo: string | undefined, viewId: string | undefined) => {
+      if (!repo || !REPO_RE.test(repo)) return undefined;
+      const items = await t.load(repo);
+      const view = resolveView(viewId, saved);
+      return { repo, view, items: applyView(items, view, t.me), counts: countsByView(items, views, t.me), generatedAt: new Date() };
+    };
+
+    app.get("/triage", async (c) => {
+      const data = await prepare(c.req.query("repo"), c.req.query("view"));
+      if (!data) return c.text("Pass ?repo=owner/name", 400);
+      return c.html(renderBoard({ ...data, me: t.me, views, savedViews: saved }));
+    });
+
+    app.get("/api/triage.json", async (c) => {
+      const data = await prepare(c.req.query("repo"), c.req.query("view"));
+      if (!data) return c.json({ error: "Pass ?repo=owner/name" }, 400);
+      return c.json({ repo: data.repo, view: data.view.id, generatedAt: data.generatedAt.toISOString(), counts: data.counts, groups: groupByPriority(data.items) });
+    });
+  }
 
   return app;
 }

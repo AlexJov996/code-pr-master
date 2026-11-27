@@ -17,3 +17,18 @@ reviews:
     enabled: true
     drafts: false
     base_branches: []       # empty = every base branch; otherwise globs like "main", "release/*"
+triage:
+  ai_assessment: false      # true = also ask Claude for value/risk per PR (needs ANTHROPIC_API_KEY)
+  saved_views:
+    - id: security-watch
+      name: Security watch
+      filter:
+        risk: [High]
+    - id: release-train
+      name: Release train
+      filter:
+        base_branches: ["release/*"]
+    - id: agent-prs
+      name: Agent-created PRs
+      filter:
+        tags: [Agent-created]

@@ -25,3 +25,10 @@ export function exitCodeFor(result: ReviewResult, failOn: FailOn): 0 | 1 {
   const all = [...result.findings, ...result.generalComments];
   return all.some((f) => RANK[f.severity] <= t) ? 1 : 0;
 }
+
+/** "owner/name", a GitHub URL, or an SSH remote → { owner, repo }. */
+export function parseRepo(input: string): { owner: string; repo: string } {
+  const m = input.trim().match(/(?:github\.com[/:])?([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/);
+  if (!m || input.includes("://") && !/github\.com/.test(input)) throw new Error(`Expected owner/name or a GitHub URL, got "${input}".`);
+  return { owner: m[1]!, repo: m[2]! };
+}

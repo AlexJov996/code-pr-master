@@ -10,6 +10,27 @@ const PathInstruction = z.object({
   instructions: z.string().min(1),
 });
 
+const LEVELS = ["Low", "Medium", "High"] as const;
+const NEXT_ACTIONS = ["Needs human review", "Needs author action", "Safe to merge", "Reviewer assigned; waiting for review"] as const;
+
+const SavedViewConfig = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  filter: z
+    .object({
+      risk: z.array(z.enum(LEVELS)).optional(),
+      tags: z.array(z.string()).optional(),
+      labels: z.array(z.string()).optional(),
+      paths: z.array(z.string()).optional(),
+      base_branches: z.array(z.string()).optional(),
+      next_action: z.array(z.enum(NEXT_ACTIONS)).optional(),
+      author_is_bot: z.boolean().optional(),
+    })
+    .prefault({}),
+});
+
+export type SavedViewConfig = z.infer<typeof SavedViewConfig>;
+
 export const ConfigSchema = z.object({
   language: z.string().default("en-US"),
   tone_instructions: z.string().default(""),
@@ -27,6 +48,12 @@ export const ConfigSchema = z.object({
           base_branches: z.array(z.string()).default([]),
         })
         .prefault({}),
+    })
+    .prefault({}),
+  triage: z
+    .object({
+      ai_assessment: z.boolean().default(false),
+      saved_views: z.array(SavedViewConfig).default([]),
     })
     .prefault({}),
 });
