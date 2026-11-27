@@ -37,7 +37,7 @@ pnpm review --json                   # machine-readable result
 
 ## Running the GitHub App
 
-1. Create a GitHub App with these permissions: **Pull requests: read & write**, **Contents: read**, **Issues: read & write**, **Metadata: read**. Subscribe to the **Pull request** and **Issue comment** events. Set the webhook URL to `https://<your-host>/api/webhooks/github`.
+1. Create a GitHub App with these permissions: **Pull requests: read & write**, **Contents: read & write** (write only matters for Secure fix pull requests; read is enough otherwise), **Issues: read & write**, **Metadata: read**. Subscribe to the **Pull request** and **Issue comment** events. Set the webhook URL to `https://<your-host>/api/webhooks/github`.
 2. Copy `.env.example` to `.env` and fill in the app id, webhook secret, private key and your Anthropic key.
 3. Start the server:
 
