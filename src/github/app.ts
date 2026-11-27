@@ -1,10 +1,13 @@
 import { createAppAuth } from "@octokit/auth-app";
 import { Octokit } from "@octokit/rest";
-import { createClaudeGenerate, createDefaultClient } from "../core/claude.js";
+import { createClaudeGenerate, createDefaultClient, createStructuredGenerate, hasAnthropicCredential } from "../core/claude.js";
+import { explainChanges } from "../understand/explain.js";
+import { EXPLAIN_MARKER, renderExplainMarkdown } from "../understand/render.js";
+import { ChangeStackOutputSchema } from "../understand/schema.js";
 import type { Config } from "../core/config.js";
 import { reviewChanges, type Generate } from "../core/review.js";
 import type { HandlerDeps } from "./handlers.js";
-import { fetchPullRequest, loadRepoConfig, publishReview, type OctokitLike, type PullRef } from "./pr.js";
+import { fetchPullRequest, loadRepoConfig, publishReview, upsertMarkedComment, type OctokitLike, type PullRef } from "./pr.js";
 
 export interface AppCredentials {
   appId: string;
@@ -40,6 +43,21 @@ export function createRunReview(opts: PipelineOptions = {}): HandlerDeps["runRev
   };
 }
 
+/** fetch → explain → post (or update) the Change Stack comment. Uses the model when a credential exists, else the heuristic walkthrough. */
+export function createRunExplain(opts: PipelineOptions = {}): NonNullable<HandlerDeps["runExplain"]> {
+  const log = opts.log ?? ((m) => console.log(m));
+  return async (octokit, ref, config) => {
+    const label = `${ref.owner}/${ref.repo}#${ref.number}`;
+    const pr = await fetchPullRequest(octokit, ref);
+    const model = opts.modelOverride ?? config.model;
+    const generate = hasAnthropicCredential() ? createStructuredGenerate(createDefaultClient(), { model }, ChangeStackOutputSchema) : undefined;
+    log(`${label}: explaining ${pr.headSha.slice(0, 7)} (${generate ? model : "heuristic"})`);
+    const result = await explainChanges({ title: pr.title, description: pr.description, diff: pr.diff }, { generate });
+    await upsertMarkedComment(octokit, ref, EXPLAIN_MARKER, renderExplainMarkdown(result));
+    log(`${label}: posted a ${result.stack.layers.length}-layer walkthrough`);
+  };
+}
+
 export function createPostComment(): HandlerDeps["postComment"] {
   return async (octokit, ref, body) => {
     await octokit.issues.createComment({ owner: ref.owner, repo: ref.repo, issue_number: ref.number, body });
@@ -51,6 +69,7 @@ export function createHandlerDeps(creds: AppCredentials, opts: PipelineOptions =
     getOctokit: createInstallationOctokit(creds),
     loadConfig: loadRepoConfig,
     runReview: createRunReview(opts),
+    runExplain: createRunExplain(opts),
     postComment: createPostComment(),
     log: opts.log,
   };

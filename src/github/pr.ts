@@ -60,13 +60,13 @@ export async function loadRepoConfig(octokit: OctokitLike, ref: PullRef & { ref:
   return DEFAULT_CONFIG;
 }
 
-/** Create or update the sticky summary comment; returns its id so later edits need no second lookup. */
-async function upsertSummary(octokit: OctokitLike, ref: PullRef, body: string, knownId?: number): Promise<number> {
+/** Create or update the one comment that starts with `marker`; returns its id so later edits need no second lookup. */
+export async function upsertMarkedComment(octokit: OctokitLike, ref: PullRef, marker: string, body: string, knownId?: number): Promise<number> {
   const params = { owner: ref.owner, repo: ref.repo, issue_number: ref.number };
   let id = knownId;
   if (id === undefined) {
     const existing = await octokit.issues.listComments({ ...params, per_page: 100 });
-    id = existing.data.find((c) => typeof c.body === "string" && c.body.startsWith(SUMMARY_MARKER))?.id;
+    id = existing.data.find((c) => typeof c.body === "string" && c.body.startsWith(marker))?.id;
   }
   if (id !== undefined) {
     await octokit.issues.updateComment({ owner: ref.owner, repo: ref.repo, comment_id: id, body });
@@ -75,6 +75,8 @@ async function upsertSummary(octokit: OctokitLike, ref: PullRef, body: string, k
   const created = await octokit.issues.createComment({ ...params, body });
   return created.data.id;
 }
+
+const upsertSummary = (octokit: OctokitLike, ref: PullRef, body: string, knownId?: number) => upsertMarkedComment(octokit, ref, SUMMARY_MARKER, body, knownId);
 
 /** Post the sticky summary and the inline review. Falls back to summary-only if GitHub rejects the inline anchors. */
 export async function publishReview(octokit: OctokitLike, pr: PullRef & { headSha: string }, result: ReviewResult): Promise<void> {

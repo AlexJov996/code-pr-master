@@ -103,3 +103,27 @@ describe("handleIssueComment", () => {
     expect(none.log).toEqual([]);
   });
 });
+
+describe("explain command", () => {
+  test("parseCommand recognises explain", () => {
+    expect(parseCommand("@carrot-review explain")).toBe("explain");
+    expect(parseCommand("@carrot-review explain this please")).toBe("explain");
+  });
+
+  test("handleIssueComment runs the explain pipeline on the explain command", async () => {
+    const log: string[] = [];
+    const d: HandlerDeps = {
+      getOctokit: async () => ({}) as any,
+      loadConfig: async () => DEFAULT_CONFIG,
+      runReview: async () => { log.push("review"); },
+      runExplain: async () => { log.push("explain"); },
+      postComment: async () => { log.push("comment"); },
+    };
+    await handleIssueComment({
+      action: "created", installation: { id: 5 }, repository: { name: "platform", owner: { login: "acme" } },
+      issue: { number: 482, pull_request: { url: "x" } }, comment: { body: "@carrot-review explain", user: { type: "User", login: "casey" } },
+    }, d);
+    expect(log).toEqual(["explain"]);
+    expect(helpText()).toContain("@carrot-review explain");
+  });
+});

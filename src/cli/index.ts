@@ -2,7 +2,11 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Command } from "commander";
-import { createClaudeGenerate, createDefaultClient } from "../core/claude.js";
+import { writeFileSync } from "node:fs";
+import { createClaudeGenerate, createDefaultClient, createStructuredGenerate, hasAnthropicCredential } from "../core/claude.js";
+import { explainChanges } from "../understand/explain.js";
+import { renderExplainMarkdown, renderExplainPage } from "../understand/render.js";
+import { ChangeStackOutputSchema } from "../understand/schema.js";
 import { CONFIG_FILENAMES, DEFAULT_CONFIG, parseConfig, PROFILES, type Config } from "../core/config.js";
 import { renderTerminalReport } from "../core/format.js";
 import { buildSystemPrompt, buildUserPrompt } from "../core/prompt.js";
@@ -80,6 +84,39 @@ program
     const result = await reviewChanges(input, { generate });
     console.log(opts.json ? JSON.stringify(result, null, 2) : renderTerminalReport(result));
     process.exit(exitCodeFor(result, opts.failOn as FailOn));
+  });
+
+program
+  .command("explain")
+  .description("Explain a diff as a Change Stack: layers, what to read first, blast radius and an architecture diagram.")
+  .option("-b, --base <ref>", "base ref to diff against (merge-base with HEAD)", "main")
+  .option("-s, --staged", "explain staged changes")
+  .option("-w, --working", "explain all uncommitted changes against HEAD")
+  .option("-d, --diff <file>", "read a unified diff from a file ('-' for stdin)")
+  .option("-t, --title <text>", "title (defaults to the last commit subject)")
+  .option("--description <text>", "description (defaults to commit messages since base)")
+  .option("-m, --model <id>", "Claude model id (overrides config)")
+  .option("--heuristic", "skip the model even when a credential is available")
+  .option("--json", "print the result as JSON")
+  .option("--html <file>", "write the interactive Change Stack page to a file")
+  .option("-C, --cwd <dir>", "repository directory", process.cwd())
+  .action(async (opts) => {
+    const cwd = resolve(opts.cwd);
+    const config = loadLocalConfig(cwd);
+    const diff = readDiff(opts, cwd);
+    if (!diff.trim()) { console.error("Nothing to explain: the diff is empty."); process.exit(0); }
+    const fromGit = gitLog(cwd, opts.base);
+    const useModel = !opts.heuristic && hasAnthropicCredential();
+    const model = opts.model ?? config.model;
+    console.error(`[carrot-review] explaining with ${useModel ? model : "path heuristics (no Anthropic credential or --heuristic)"}…`);
+    const generate = useModel ? createStructuredGenerate(createDefaultClient(), { model }, ChangeStackOutputSchema) : undefined;
+    const result = await explainChanges({ title: opts.title ?? fromGit.title, description: opts.description ?? fromGit.description, diff }, { generate });
+    if (opts.html) {
+      writeFileSync(resolve(cwd, opts.html), renderExplainPage(result, { repo: "local", number: 0 }));
+      console.error(`[carrot-review] wrote ${opts.html}`);
+    }
+    if (opts.json) console.log(JSON.stringify({ stack: result.stack, overview: result.overview, layerStats: result.layerStats, semantic: result.semantic }, null, 2));
+    else if (!opts.html) console.log(renderExplainMarkdown(result));
   });
 
 program

@@ -59,9 +59,9 @@ export const PRIORITY_LABEL: Record<Priority, string> = {
 };
 
 /** Code where a mistake is a security incident: urgent when touched. */
-const CRITICAL_PATH = /(^|\/)(auth[a-z]*|security|secrets?|crypto|credentials?|oauth|sso|signing)(\/|\.|-|_|$)/i;
+export const CRITICAL_PATH = /(^|\/)(auth[a-z]*|security|secrets?|crypto|credentials?|oauth|sso|signing)(\/|\.|-|_|$)/i;
 /** Code where a mistake is expensive but not an immediate breach: high risk, high priority. */
-const SENSITIVE_PATH = /(^|\/)(payments?|billing|iam|permissions?|infra|terraform|k8s|kubernetes|helm|deploy|migrations?|\.github\/workflows|dockerfile|docker-compose)(\/|\.|$)|\.(tf)$/i;
+export const SENSITIVE_PATH = /(^|\/)(payments?|billing|iam|permissions?|infra|terraform|k8s|kubernetes|helm|deploy|migrations?|\.github\/workflows|dockerfile|docker-compose)(\/|\.|$)|\.(tf)$/i;
 /** Titles that hint at secrets handling; raise risk to Medium when the paths alone look harmless. */
 const RISKY_TITLE = /\b(signing key|secret|credential|password|vulnerab|cve|security fix)\b/i;
 const SHARED_PATH = /(^|\/)(packages\/core|core|shared|lib|common|platform|sdk)(\/|$)/i;

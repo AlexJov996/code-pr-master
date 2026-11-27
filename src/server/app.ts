@@ -1,6 +1,10 @@
 import { Webhooks } from "@octokit/webhooks";
 import { Hono } from "hono";
 import { renderBoard } from "../triage/board.js";
+import { explainChanges, type ExplainInput } from "../understand/explain.js";
+import { renderExplainMarkdown, renderExplainPage } from "../understand/render.js";
+import type { ChangeStackOutput } from "../understand/schema.js";
+import type { StructuredGenerate } from "../core/claude.js";
 import { applyView, BUILT_IN_VIEWS, countsByView, groupByPriority, resolveView, type SavedView, type TriageItem } from "../triage/views.js";
 
 export interface TriageDeps {
@@ -10,11 +14,19 @@ export interface TriageDeps {
   savedViews?: SavedView[];
 }
 
+export interface ExplainDeps {
+  /** Fetch title, description and diff for "owner/name" and a pull request number. */
+  load: (repo: string, number: number) => Promise<ExplainInput>;
+  /** Model call; omitted means the heuristic walkthrough. */
+  generate?: StructuredGenerate<ChangeStackOutput>;
+}
+
 export interface ServerDeps {
   webhookSecret: string;
   onPullRequest: (payload: any) => Promise<void>;
   onIssueComment: (payload: any) => Promise<void>;
   triage?: TriageDeps;
+  explain?: ExplainDeps;
   log?: (msg: string) => void;
 }
 
@@ -67,6 +79,29 @@ export function createApp(deps: ServerDeps) {
       const data = await prepare(c.req.query("repo"), c.req.query("view"));
       if (!data) return c.json({ error: "Pass ?repo=owner/name" }, 400);
       return c.json({ repo: data.repo, view: data.view.id, generatedAt: data.generatedAt.toISOString(), counts: data.counts, groups: groupByPriority(data.items) });
+    });
+  }
+
+  if (deps.explain) {
+    const x = deps.explain;
+    const prepare = async (repo: string | undefined, pr: string | undefined) => {
+      const number = Number(pr);
+      if (!repo || !REPO_RE.test(repo) || !Number.isInteger(number) || number <= 0) return undefined;
+      const input = await x.load(repo, number);
+      return { repo, number, result: await explainChanges(input, { generate: x.generate }) };
+    };
+    const bad = "Pass ?repo=owner/name&pr=<number>";
+    app.get("/explain", async (c) => {
+      const d = await prepare(c.req.query("repo"), c.req.query("pr"));
+      return d ? c.html(renderExplainPage(d.result, { repo: d.repo, number: d.number })) : c.text(bad, 400);
+    });
+    app.get("/api/explain.md", async (c) => {
+      const d = await prepare(c.req.query("repo"), c.req.query("pr"));
+      return d ? c.text(renderExplainMarkdown(d.result), 200, { "content-type": "text/markdown; charset=utf-8" }) : c.text(bad, 400);
+    });
+    app.get("/api/explain.json", async (c) => {
+      const d = await prepare(c.req.query("repo"), c.req.query("pr"));
+      return d ? c.json({ repo: d.repo, number: d.number, stack: d.result.stack, overview: d.result.overview, layerStats: d.result.layerStats, semantic: d.result.semantic }) : c.json({ error: bad }, 400);
     });
   }
 

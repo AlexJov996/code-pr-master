@@ -43,3 +43,8 @@ export function createClaudeGenerate(client: ParseClient, opts: ClaudeOptions): 
 export function createDefaultClient(): Anthropic {
   return new Anthropic();
 }
+
+/** True when the SDK will find a credential without being handed one explicitly. */
+export function hasAnthropicCredential(): boolean {
+  return Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_PROFILE);
+}

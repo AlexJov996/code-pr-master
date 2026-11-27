@@ -1,0 +1,138 @@
+diff --git a/prisma/schema.prisma b/prisma/schema.prisma
+--- a/prisma/schema.prisma
++++ b/prisma/schema.prisma
+@@ -40,3 +40,14 @@ model Member {
+   role      Role
+ }
++
++model Invitation {
++  id        String   @id @default(cuid())
++  email     String
++  role      Role
++  token     String   @unique
++  expiresAt DateTime
++  orgId     String
++  org       Org      @relation(fields: [orgId], references: [id])
++  createdAt DateTime @default(now())
++}
+diff --git a/src/server/auth/permissions.ts b/src/server/auth/permissions.ts
+--- a/src/server/auth/permissions.ts
++++ b/src/server/auth/permissions.ts
+@@ -20,6 +20,14 @@ export function canEditSettings(member: Member): boolean {
+   return member.role === "ADMIN"
+ }
+ 
+ export function canRemoveMember(member: Member): boolean {
+-  return member.role === "OWNER"
++  return member.role === "ADMIN"
+ }
++
++/**
++ * Whether the member may create or revoke teammate invitations.
++ * Restricted to org admins.
++ */
++export function canInviteMembers(member: Member): boolean {
++  return member.role === "ADMIN"
++}
+diff --git a/src/server/invitations/invitationService.ts b/src/server/invitations/invitationService.ts
+new file mode 100644
+--- /dev/null
++++ b/src/server/invitations/invitationService.ts
+@@ -0,0 +1,30 @@
++import { randomBytes } from "node:crypto"
++import { db } from "../db"
++import { sendInvitationEmail } from "../email/invitation"
++
++const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000
++
++export async function createInvitation(orgId: string, email: string, role: Role) {
++  const token = randomBytes(24).toString("hex")
++  const expiresAt = new Date(Date.now() + SEVEN_DAYS)
++  const invitation = await db.invitation.create({ data: { orgId, email, role, token, expiresAt } })
++  await sendInvitationEmail(email, token)
++  return invitation
++}
++
++export async function listInvitations(orgId: string) {
++  return db.invitation.findMany({ where: { orgId } })
++}
++
++export async function acceptInvitation(token: string, userId: string) {
++  const invitation = await db.invitation.findUnique({ where: { token } })
++  if (!invitation || invitation.expiresAt < new Date()) throw new Error("Invitation expired")
++  await db.member.create({ data: { orgId: invitation.orgId, userId, role: invitation.role } })
++  await db.invitation.delete({ where: { id: invitation.id } })
++}
++
++class InvitationError extends Error {}
++
++function isExpired(expiresAt: Date) {
++  return expiresAt < new Date()
++}
+diff --git a/src/server/invitations/invitationRouter.ts b/src/server/invitations/invitationRouter.ts
+new file mode 100644
+--- /dev/null
++++ b/src/server/invitations/invitationRouter.ts
+@@ -0,0 +1,12 @@
++import { Router } from "express"
++import { canInviteMembers } from "../auth/permissions"
++import { createInvitation, listInvitations, acceptInvitation } from "./invitationService"
++
++export const invitationRouter = Router()
++
++invitationRouter.post("/", async (req, res) => {
++  if (!canInviteMembers(req.member)) return res.status(403).end()
++  res.json(await createInvitation(req.member.orgId, req.body.email, req.body.role))
++})
++invitationRouter.get("/", async (req, res) => res.json(await listInvitations(req.member.orgId)))
++invitationRouter.post("/accept", async (req, res) => res.json(await acceptInvitation(req.body.token, req.user.id)))
+diff --git a/src/server/email/invitation.ts b/src/server/email/invitation.ts
+new file mode 100644
+--- /dev/null
++++ b/src/server/email/invitation.ts
+@@ -0,0 +1,5 @@
++import { mailer } from "./mailer"
++
++export async function sendInvitationEmail(to: string, token: string) {
++  await mailer.send({ to, subject: "You're invited", text: `Join: https://app.example.com/invite/${token}` })
++}
+diff --git a/src/web/members/InviteDialog.tsx b/src/web/members/InviteDialog.tsx
+new file mode 100644
+--- /dev/null
++++ b/src/web/members/InviteDialog.tsx
+@@ -0,0 +1,8 @@
++import { useState } from "react"
++
++export function InviteDialog({ onInvite }: { onInvite: (email: string, role: string) => void }) {
++  const [email, setEmail] = useState("")
++  return <form onSubmit={() => onInvite(email, "MEMBER")}><input value={email} onChange={(e) => setEmail(e.target.value)} /></form>
++}
++
++export default InviteDialog
+diff --git a/src/web/members/MembersPage.tsx b/src/web/members/MembersPage.tsx
+--- a/src/web/members/MembersPage.tsx
++++ b/src/web/members/MembersPage.tsx
+@@ -1,6 +1,8 @@
+ import { MemberList } from "./MemberList"
++import { InviteDialog } from "./InviteDialog"
+ 
+ export function MembersPage() {
+-  return <MemberList />
++  return <><MemberList /><InviteDialog onInvite={() => {}} /></>
+ }
+diff --git a/src/server/invitations/invitationService.test.ts b/src/server/invitations/invitationService.test.ts
+new file mode 100644
+--- /dev/null
++++ b/src/server/invitations/invitationService.test.ts
+@@ -0,0 +1,4 @@
++import { test, expect } from "vitest"
++import { createInvitation } from "./invitationService"
++
++test("creates an invitation", async () => { expect(createInvitation).toBeDefined() })
+diff --git a/docs/invitations.md b/docs/invitations.md
+new file mode 100644
+--- /dev/null
++++ b/docs/invitations.md
+@@ -0,0 +1,2 @@
++# Invitations
++Admins can invite teammates by email.

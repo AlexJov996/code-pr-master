@@ -1,6 +1,6 @@
 # carrot-review
 
-Two of CodeRabbit's products, rebuilt: **Review**, a GitHub App that reviews every pull request with a walkthrough, a changes table, pre-merge checks and line-anchored findings (plus a CLI that runs the same engine on a local diff), and **Triage**, a board that scores, ranks and routes a repository's open pull requests.
+Three of CodeRabbit's products, rebuilt: **Review**, a GitHub App that reviews every pull request with a walkthrough, a changes table, pre-merge checks and line-anchored findings (plus a CLI that runs the same engine on a local diff); **Triage**, a board that scores, ranks and routes a repository's open pull requests; and **Explain** (their "Understand" pillar), a Change Stack walkthrough that splits a large diff into ordered layers with what to read first, blast radius context and an architecture diagram.
 
 The output format follows what CodeRabbit posts on public pull requests: a sticky summary comment (walkthrough, grouped changes, effort estimate, pre-merge checks) and inline comments of the form `category | severity | effort`, a one-line title, an explanation, a proposed fix diff, and a self-contained prompt for coding agents.
 
@@ -11,6 +11,7 @@ The output format follows what CodeRabbit posts on public pull requests: a stick
 | Review engine | `src/core/` | Parses unified diffs with new-side line numbers, builds the prompts, calls Claude with a structured output schema, validates and snaps findings onto real diff lines, applies the review profile, renders Markdown. |
 | GitHub App | `src/server/`, `src/github/` | Signature-verified webhook endpoint. Reviews on `opened`, `synchronize`, `reopened`, `ready_for_review`; answers `@carrot-review review` and `@carrot-review help` in PR comments. Posts one sticky summary comment and one review with inline comments. |
 | CLI | `src/cli/`, `bin/carrot-review.js` | `review` (default) reviews a branch, staged or working-tree diff (or a diff file) and prints the report; `--fail-on` makes it a CI gate. `triage owner/name` prints the board. |
+| Explain | `src/understand/` | Splits a diff into ordered layers with dependencies and risks, summarizes the regions worth reading with a complexity rating, detects symbol-level changes, computes blast radius, and draws a Mermaid architecture diagram. Uses Claude when a credential exists and a path-based heuristic otherwise. Posted with `@carrot-review explain`, served at `/explain`, printed by `carrot-review explain`. |
 | Triage | `src/triage/` | Collects open pull requests from GitHub, scores each for priority (P0 to P3), risk, review depth, blast radius, complexity and effort, decides the next action, explains why in one line, and suggests reviewers from CODEOWNERS. Served as a board at `/triage` and as JSON at `/api/triage.json`. |
 
 ## Quick start (CLI)
@@ -66,6 +67,25 @@ How scoring works, in short:
 - **Priority** is P0 for hotfix labels, critical linked issues, and high-risk changes to security-critical code or by agents; P1 for other high-risk work; P3 for docs; P2 otherwise. Drafts cap at P2 and author-owned work at P1, since a reviewer cannot act on those.
 - **Routing** ranks CODEOWNERS owners by how many changed files they own, excluding the author and anyone already requested.
 
+## Explain (Change Stack)
+
+```bash
+pnpm review explain --base main                       # Markdown walkthrough of the branch
+pnpm review explain --diff change.patch --html stack.html   # interactive page with layers, diffs and summaries
+pnpm review explain --staged --json
+pnpm review explain --heuristic                       # skip the model even with a credential
+```
+
+In a pull request, comment `@carrot-review explain` and the bot posts (and later updates) one comment with the walkthrough. With the server running, `http://localhost:3000/explain?repo=owner/name&pr=482` shows the Change Stack page: layers on the left, per-file diffs with a "Mark viewed" toggle in the middle, region summaries filterable by complexity on the right, and the diagram. `/api/explain.md` and `/api/explain.json` serve the same data. `CARROT_DEMO=1` serves a fictional pull request.
+
+What it produces:
+
+- **Layers**: 2 to 6 ordered steps (data model, service and API, UI, tests, docs), each with its files, a description, the layers it depends on, and risks. Without a model the layers come from path conventions.
+- **What to read first**: region summaries with new-side line ranges and a High, Medium or Low complexity rating. Without a model, one per added or changed function, class or model, rated by length.
+- **Semantic diff**: added, removed or modified functions, classes, interfaces, types, Prisma models and imports, detected from the diff for TypeScript, JavaScript, Python, Go, Prisma and a few others.
+- **Blast radius**: files, areas and security-sensitive paths for the whole change and per layer, with an attention list for reviewers.
+- **Architecture**: a Mermaid flowchart from the model's component edges, or from relative imports between changed files.
+
 ## Configuration
 
 Put a `.carrot-review.yaml` at the repository root. The GitHub App reads it from the pull request head; the CLI reads it from the working directory. Every key is optional.
@@ -102,7 +122,7 @@ Profiles map to severity thresholds: `quiet` posts only Critical and Major findi
 ## Development
 
 ```bash
-pnpm test        # vitest, 115 tests, no network
+pnpm test        # vitest, 144 tests, no network
 pnpm typecheck   # tsc --noEmit
 ```
 
@@ -110,4 +130,4 @@ The model call is injected (`Generate` in `src/core/review.ts`), so the whole pi
 
 ## Not built yet
 
-Review and Triage are in. CodeRabbit's other products (Understand, Secure, Verify, the IDE extension, GitLab support) are not.
+Review, Triage and Explain are in. CodeRabbit's other products (Secure, Verify, the IDE extension, GitLab support) are not.
