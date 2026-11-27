@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { StructuredGenerate } from "../core/claude.js";
 import { parseUnifiedDiff } from "../core/diff.js";
 import { isScannable, matchPatterns } from "./patterns.js";
+import { redactSecrets } from "./redact.js";
 import { SEVERITY_RANK, type HuntOutput, type ScanResult, type SecSeverity, type SecurityFinding, type Verification } from "./schema.js";
 import { verifyFindings, type VerifyDeps } from "./verify.js";
 
@@ -62,6 +63,15 @@ function chunk(files: readonly ScanFile[], maxChars: number): ScanFile[][] {
   return out;
 }
 
+/** Secret values never leave the scanner: not in titles, attack paths, descriptions, hints or the verifier's reasoning. */
+function redactFinding(f: SecurityFinding): SecurityFinding {
+  return {
+    ...f, title: redactSecrets(f.title), description: redactSecrets(f.description), attackPath: f.attackPath.map(redactSecrets),
+    fixHint: f.fixHint === undefined ? undefined : redactSecrets(f.fixHint),
+    verification: { ...f.verification, reasoning: redactSecrets(f.verification.reasoning) },
+  };
+}
+
 /** Map (patterns) → Hunt (model) → Verify. */
 export async function scanFiles(input: readonly ScanFile[], deps: ScanDeps, mode: ScanResult["mode"] = "files"): Promise<ScanResult> {
   const walkedFiles = input.filter((f) => isScannable(f.path));
@@ -98,12 +108,13 @@ export async function scanFiles(input: readonly ScanFile[], deps: ScanDeps, mode
     }
   }
 
-  const { kept, rejected } = await verifyFindings([...raw.values()], deps);
+  const { kept, rejected } = await verifyFindings([...raw.values()], { ...deps, contentFor: deps.contentFor ?? ((path) => byPath.get(path)?.content) });
   const min = deps.minSeverity ? SEVERITY_RANK[deps.minSeverity] : SEVERITY_RANK.Low;
   const findings = kept
     .filter((f) => SEVERITY_RANK[f.severity] <= min)
-    .sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] || a.path.localeCompare(b.path) || a.line - b.line);
-  return { findings, rejected, walked: walkedFiles.map((f) => f.path), skipped, scannedAt: new Date().toISOString(), mode };
+    .sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] || a.path.localeCompare(b.path) || a.line - b.line)
+    .map(redactFinding);
+  return { findings, rejected: rejected.map(redactFinding), walked: walkedFiles.map((f) => f.path), skipped, scannedAt: new Date().toISOString(), mode };
 }
 
 /** PR scan: rebuild the new-side content of every changed file from the diff and scan only the added lines. */

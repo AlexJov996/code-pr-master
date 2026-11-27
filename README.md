@@ -59,6 +59,8 @@ pnpm review triage x --demo                  # built-in fictional data, no GitHu
 
 To serve the board, start the server with `GITHUB_TOKEN` set (and optionally `CARROT_ME=<your login>`), then open `http://localhost:3000/triage?repo=owner/name`. `CARROT_TRIAGE_DEMO=1` serves fictional data instead.
 
+The dashboards read repositories with the server's own token, so set `CARROT_DASHBOARD_TOKEN` on anything reachable beyond your machine. Every page and API except the health check and the webhook then needs it: open a page once with `?token=<value>` to get a cookie, or send `Authorization: Bearer <value>`.
+
 Built-in views: All reviews, Needs my review, Authored by me, Safe to merge. Saved views come from the config (below): filter by risk, tags, labels, paths, base branch globs, next action, or bot authorship.
 
 How scoring works, in short:
@@ -91,7 +93,7 @@ What it produces:
 ## Secure
 
 ```bash
-pnpm review secure scan .                        # deep scan of a checkout, Markdown report
+pnpm review secure scan .                        # deep scan of a checkout, Markdown report (never reads .env* or gitignored files; secret values are masked in every output)
 pnpm review secure scan . --save --repo acme/x   # store it so the server can serve /secure?repo=acme/x
 pnpm review secure scan --diff change.patch --fail-on high   # PR-style scan of added lines, CI gate
 pnpm review secure scan . --html posture.html
@@ -159,13 +161,13 @@ journeys:
 
 Actions: `goto`, `click`, `fill`, `press`, `select`, `check`, `expect_text`, `expect_not_text`, `expect_url`, `expect_visible`, `expect_no_errors`, `wait`. Targets use role and name, text, label, placeholder, test id or, as a last resort, a CSS selector.
 
-Every run is stored under `.carrot-review/verify/<run id>/` with `run.json`, a screenshot after each step, a `recording.webm` per journey and the logs. The server lists runs at `/verify` and shows one at `/verify?run=<id>`: scenarios on the left, the finding with expected, observed and guidance, Recording, Screenshots and Logs tabs, and a copyable repair handoff for a coding agent. In a pull request, `@carrot-review verify` runs the saved journeys plus generated scenarios against `verify.base_url` and posts the report; without a base URL it replies with setup instructions. Set `CARROT_PUBLIC_URL` so the comment can link to the run page.
+Every run is stored under `.carrot-review/verify/<run id>/` with `run.json`, a screenshot after each step, a `recording.webm` per journey and the logs. The server lists runs at `/verify` and shows one at `/verify?run=<id>`: scenarios on the left, the finding with expected, observed and guidance, Recording, Screenshots and Logs tabs, and a copyable repair handoff for a coding agent. In a pull request, `@carrot-review verify` runs the saved journeys plus generated scenarios against `verify.base_url` and posts the report; without a base URL it replies with setup instructions. Set `CARROT_PUBLIC_URL` so the comment can link to the run page. The journeys file and `base_url` are read from the base branch, and the browser refuses to leave the application's origin, so a pull request cannot steer the bot's browser anywhere else.
 
 The browser is your local Chrome or Chromium (`CARROT_CHROME` to point at another executable).
 
 ## Configuration
 
-Put a `.carrot-review.yaml` at the repository root. The GitHub App reads it from the pull request head; the CLI reads it from the working directory. Every key is optional.
+Put a `.carrot-review.yaml` at the repository root. The GitHub App reads it from the pull request's **base branch**, never from the head, so a fork author cannot point Verify at an internal URL or switch on auto-fix by editing the config in their branch. The CLI reads it from the working directory. Every key is optional.
 
 ```yaml
 language: en-US

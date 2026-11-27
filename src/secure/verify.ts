@@ -30,9 +30,28 @@ export function applyVerification(finding: SecurityFinding, v: Verification): Se
   return { ...finding, severity, verification: { ...v } };
 }
 
+export interface VerifyContext {
+  /** Numbered source around the finding (the whole file when small), for the verifier to reason about reachability. */
+  content?: string;
+}
+
+export type VerifyFinding = (finding: SecurityFinding, context?: VerifyContext) => Promise<Verification>;
+
+/** Numbered lines of `content`: all of them when the file is small, otherwise `radius` lines either side of `line`. */
+export function excerpt(content: string, line: number, radius = 80, maxChars = 16_000): string {
+  const lines = content.split("\n");
+  const number = (l: string, i: number) => `${String(i + 1).padStart(5)} | ${l}`;
+  if (content.length <= maxChars) return lines.map(number).join("\n");
+  const from = Math.max(0, line - 1 - radius);
+  const to = Math.min(lines.length, line + radius);
+  return lines.slice(from, to).map((l, i) => number(l, from + i)).join("\n");
+}
+
 export interface VerifyDeps {
   /** Model-backed verification for one finding; omitted means path heuristics only. */
-  verify?: (finding: SecurityFinding) => Promise<Verification>;
+  verify?: VerifyFinding;
+  /** Source for the verifier's context, by finding path. */
+  contentFor?: (path: string) => string | undefined;
   concurrency?: number;
   onError?: (finding: SecurityFinding, err: unknown) => void;
 }
@@ -53,7 +72,8 @@ export async function verifyFindings(findings: readonly SecurityFinding[], deps:
       const heuristic: Verification = { reachability: heuristicReachability(f.path), exploitability: "Unknown", blastRadius: "Unknown", verdict: "Needs review", reasoning: "Path heuristics only; not verified against the code." };
       let v = heuristic;
       if (deps.verify) {
-        try { v = await deps.verify(f); } catch (err) { deps.onError?.(f, err); }
+        const source = deps.contentFor?.(f.path);
+        try { v = await deps.verify(f, { content: source === undefined ? undefined : excerpt(source, f.line) }); } catch (err) { deps.onError?.(f, err); }
       }
       results[i] = applyVerification(f, v);
     }

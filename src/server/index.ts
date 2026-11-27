@@ -63,6 +63,9 @@ const explain: ExplainDeps | undefined = demo || process.env.GITHUB_TOKEN
     }
   : undefined;
 
+const dashboardToken = process.env.CARROT_DASHBOARD_TOKEN || undefined;
+if (!dashboardToken && (process.env.GITHUB_TOKEN || hasApp)) log("CARROT_DASHBOARD_TOKEN is not set: anyone who can reach this port can read every repository GITHUB_TOKEN can, and every stored scan and Verify run.");
+
 const secure: SecureDeps = {
   load: demo
     ? async () => ({ result: await runDeepScan(DEMO_SECURE_FILES, localConfig, {}), totalFiles: DEMO_SECURE_TOTALS })
@@ -79,6 +82,7 @@ const app = createApp({
   explain,
   secure,
   verify,
+  dashboardToken,
   log: (m) => console.error(`[carrot-review] ${m}`),
 });
 

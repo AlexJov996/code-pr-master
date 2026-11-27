@@ -80,3 +80,22 @@ describe("scanDiff (PR scan)", () => {
     expect(r.findings).toEqual([]);
   });
 });
+
+describe("scanFiles keeps secret values out of its output", () => {
+  const token = `ghp_${"b".repeat(36)}`;
+  const secretFiles = [{ path: "src/config.ts", content: `const token = "${token}";\n` }];
+
+  test("pattern findings and model findings are redacted", async () => {
+    const hunt: HuntOutput = { findings: [{ category: "Secrets", title: "Token committed.", path: "src/config.ts", line: 1, severity: "Critical", description: `The token ${token} is live.`, attack_path: [`const token = "${token}"`], fix_hint: "" }] };
+    const r = await scanFiles(secretFiles, { hunt: async () => hunt, verify: async () => ({ reachability: "Reachable", exploitability: "Easy", blastRadius: "High", verdict: "Confirmed", reasoning: `Found ${token} in config.` }) });
+    expect(r.findings).toHaveLength(1);
+    expect(r.findings[0]!.attackPath[0]).toContain("ghp_…");
+    expect(JSON.stringify(r)).not.toContain(token);
+  });
+
+  test("the verifier receives the numbered file content around the finding", async () => {
+    let ctx: { content?: string } | undefined;
+    await scanFiles(files, { verify: async (f, c) => { if (f.path === "src/search/query.ts") ctx = c; return { reachability: "Unknown", exploitability: "Unknown", blastRadius: "Unknown", verdict: "Needs review", reasoning: "" }; } });
+    expect(ctx?.content).toContain("2 | const rows = await db.raw(");
+  });
+});

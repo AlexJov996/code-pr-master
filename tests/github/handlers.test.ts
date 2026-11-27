@@ -29,6 +29,13 @@ describe("handlePullRequest", () => {
     }
   });
 
+  test("loads the config from the base branch, never from the untrusted head", async () => {
+    const refs: string[] = [];
+    const { d } = deps({ loadConfig: async (_o, r) => { refs.push(r.ref); return DEFAULT_CONFIG; } });
+    await handlePullRequest({ ...base, action: "opened" }, d);
+    expect(refs).toEqual(["main"]);
+  });
+
   test("ignores other actions", async () => {
     const { d, log } = deps();
     await handlePullRequest({ ...base, action: "labeled" }, d);
@@ -190,6 +197,6 @@ describe("verify command", () => {
     const none = { ...d, runVerify: undefined };
     log.length = 0;
     await handleIssueComment(payload, none);
-    expect(log[0]).toMatch(/^comment:/);
+    expect(log[0]).toMatch(/^comment:The verify command is not/);
   });
 });

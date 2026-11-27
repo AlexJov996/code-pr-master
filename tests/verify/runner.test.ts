@@ -56,8 +56,14 @@ d("runJourneys against the demo shop (real Chrome)", () => {
     expect(readdirSync(run.dir!)).toContain("run.json");
   }, 90_000);
 
+  test("a journey that leaves the application's origin fails on that step", async () => {
+    const run = await runJourneys([{ id: "away", title: "Away", goal: "g", steps: [{ action: "goto", url: "/" }, { action: "goto", url: "http://169.254.169.254/latest/meta-data" }], source: "generated" }], { baseUrl, outDir, executablePath: chrome!, headless: true, stepTimeoutMs: 3000 });
+    expect(run.runs[0]!.status).toBe("failed");
+    expect(run.runs[0]!.steps[1]!.error).toMatch(/origin/);
+  }, 30_000);
+
   test("a journey whose first step cannot run is blocked, not failed", async () => {
-    const run = await runJourneys([{ id: "nowhere", title: "Nowhere", goal: "g", steps: [{ action: "goto", url: "http://127.0.0.1:1/" }, { action: "expect_text", value: "x" }], source: "saved" }], { baseUrl, outDir, executablePath: chrome!, headless: true, stepTimeoutMs: 3000 });
+    const run = await runJourneys([{ id: "nowhere", title: "Nowhere", goal: "g", steps: [{ action: "goto", url: "/" }, { action: "expect_text", value: "x" }], source: "saved" }], { baseUrl: "http://127.0.0.1:1", outDir, executablePath: chrome!, headless: true, stepTimeoutMs: 3000 });
     expect(run.runs[0]!.status).toBe("blocked");
     expect(run.runs[0]!.steps[1]!.status).toBe("skipped");
   }, 30_000);

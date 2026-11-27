@@ -4,11 +4,12 @@ import { fetchPullRequest, upsertMarkedComment, type OctokitLike, type PullRef, 
 import { draftFix, openFixPullRequest, type FixOctokit } from "./fix.js";
 import { renderFindingMarkdown, renderScanMarkdown, SECURITY_MARKER } from "./posture.js";
 import { scanDiff, scanFiles, type ScanDeps, type ScanFile } from "./scan.js";
-import type { FixOutput, HuntOutput, ScanResult, SecurityFinding, Verification } from "./schema.js";
+import type { FixOutput, HuntOutput, ScanResult } from "./schema.js";
+import type { VerifyFinding } from "./verify.js";
 
 export interface SecurityDeps {
   hunt?: StructuredGenerate<HuntOutput>;
-  verify?: (finding: SecurityFinding) => Promise<Verification>;
+  verify?: VerifyFinding;
   fix?: StructuredGenerate<FixOutput>;
   log?: (msg: string) => void;
 }

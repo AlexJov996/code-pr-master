@@ -212,6 +212,7 @@ verify
   .option("-j, --journeys <file>", "journeys YAML (default: the configured journeys_file)")
   .option("--only <ids>", "comma-separated journey ids to run")
   .option("--diff <file>", "also generate scenarios for this diff ('-' for stdin)")
+  .option("-t, --title <text>", "title of the change, to steer scenario generation for --diff")
   .option("--setup", "install, start and wait for the app using verify.setup from the config")
   .option("--headed", "show the browser")
   .option("--out <dir>", "where to store runs", ".carrot-review/verify")

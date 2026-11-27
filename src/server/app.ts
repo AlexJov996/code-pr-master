@@ -1,5 +1,7 @@
 import { Webhooks } from "@octokit/webhooks";
 import { Hono } from "hono";
+import { getCookie, setCookie } from "hono/cookie";
+import { timingSafeEqual } from "node:crypto";
 import { renderBoard } from "../triage/board.js";
 import { explainChanges, type ExplainInput } from "../understand/explain.js";
 import { renderExplainMarkdown, renderExplainPage } from "../understand/render.js";
@@ -46,7 +48,20 @@ export interface ServerDeps {
   explain?: ExplainDeps;
   secure?: SecureDeps;
   verify?: VerifyDeps;
+  /**
+   * When set, every page and API except the health check and the webhook needs it: as `Authorization: Bearer`,
+   * as the `carrot_dashboard` cookie, or once as `?token=` which sets the cookie. The dashboards read repositories
+   * with the server's own GitHub token, so without this anyone who can reach the port can read what it can.
+   */
+  dashboardToken?: string;
   log?: (msg: string) => void;
+}
+
+const COOKIE = "carrot_dashboard";
+
+function sameToken(a: string, b: string): boolean {
+  const x = Buffer.from(a); const y = Buffer.from(b);
+  return x.length === y.length && timingSafeEqual(x, y);
 }
 
 const REPO_RE = /^[\w.-]+\/[\w.-]+$/;
@@ -60,6 +75,26 @@ export function createApp(deps: ServerDeps) {
   const app = new Hono();
 
   app.get("/healthz", (c) => c.json({ ok: true }));
+
+  if (deps.dashboardToken) {
+    const token = deps.dashboardToken;
+    app.use("*", async (c, next) => {
+      const path = c.req.path;
+      if (path === "/healthz" || path === "/api/webhooks/github") return next();
+      const url = new URL(c.req.url);
+      const once = url.searchParams.get("token");
+      if (once !== null) {
+        if (!sameToken(once, token)) return c.text("Wrong dashboard token.", 401);
+        setCookie(c, COOKIE, token, { httpOnly: true, sameSite: "Lax", path: "/", secure: url.protocol === "https:" });
+        url.searchParams.delete("token");
+        return c.redirect(url.pathname + (url.searchParams.size ? `?${url.searchParams}` : ""), 302);
+      }
+      const bearer = (c.req.header("authorization") ?? "").replace(/^Bearer\s+/i, "");
+      const cookie = getCookie(c, COOKIE) ?? "";
+      if ((bearer && sameToken(bearer, token)) || (cookie && sameToken(cookie, token))) return next();
+      return c.text("This dashboard needs its token: open any page once with ?token=<CARROT_DASHBOARD_TOKEN>, or send it as a Bearer header.", 401);
+    });
+  }
 
   app.post("/api/webhooks/github", async (c) => {
     const event = c.req.header("x-github-event") ?? "";

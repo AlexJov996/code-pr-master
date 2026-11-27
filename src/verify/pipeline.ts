@@ -32,14 +32,21 @@ export function createExplainFinding(model: string): ((run: JourneyRun, pageText
   };
 }
 
-async function loadSavedJourneys(octokit: OctokitLike, ref: PullRef, path: string, gitRef: string): Promise<Journey[]> {
+/** The repository's saved journeys at `gitRef`. A missing file means none; a broken file or a GitHub error is reported, never swallowed. */
+export async function loadSavedJourneys(octokit: OctokitLike, ref: PullRef, path: string, gitRef: string): Promise<Journey[]> {
+  let res: Awaited<ReturnType<OctokitLike["repos"]["getContent"]>>;
   try {
-    const res = await octokit.repos.getContent({ owner: ref.owner, repo: ref.repo, path, ref: gitRef });
-    const data = res.data as { type?: string; content?: string; encoding?: string };
-    if (data.type !== "file" || typeof data.content !== "string") return [];
+    res = await octokit.repos.getContent({ owner: ref.owner, repo: ref.repo, path, ref: gitRef });
+  } catch (err) {
+    if ((err as { status?: number }).status === 404) return [];
+    throw new Error(`Could not read ${path} at ${gitRef}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  const data = res.data as { type?: string; content?: string; encoding?: string };
+  if (data.type !== "file" || typeof data.content !== "string") return [];
+  try {
     return parseJourneys(Buffer.from(data.content, (data.encoding as BufferEncoding) || "base64").toString("utf8"));
-  } catch {
-    return [];
+  } catch (err) {
+    throw new Error(`${path} at ${gitRef} is not a valid journeys file: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -51,7 +58,16 @@ export async function runPullRequestVerify(octokit: OctokitLike, ref: PullRef, c
     return {};
   }
   const pr = await fetchPullRequest(octokit, ref);
-  const saved = await loadSavedJourneys(octokit, ref, config.verify.journeys_file, pr.headSha);
+  let saved: Journey[];
+  try {
+    // Saved journeys come from the base branch, like the config: a pull request cannot hand the bot's browser its own script.
+    saved = await loadSavedJourneys(octokit, ref, config.verify.journeys_file, pr.baseRef);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log(`${ref.owner}/${ref.repo}#${ref.number}: ${message}`);
+    await upsertMarkedComment(octokit, ref, VERIFY_MARKER, `${VERIFY_MARKER}\n\n## 🧪 Verify\n\nI could not run the saved journeys: ${message}\n\nFix the file and comment \`@carrot-review verify\` again.`);
+    return {};
+  }
   const generate = hasAnthropicCredential() ? createStructuredGenerate(createDefaultClient(), { model: opts.model }, JourneysOutputSchema) : undefined;
   const generated = await generatePullRequestScenarios({ title: pr.title, description: pr.description, diff: pr.diff, routes: [], existing: saved }, generate);
   const journeys = [...generated, ...saved];

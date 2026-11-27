@@ -57,3 +57,10 @@ describe("parseJourneys", () => {
     expect(journeyFromYaml({ id: "a", title: "A", goal: "g", steps: [{ action: "wait", value: "500" }] }).steps[0]).toEqual({ action: "wait", value: "500" });
   });
 });
+
+describe("goto shorthand", () => {
+  test("accepts a plain string and the object form", () => {
+    const j = journeyFromYaml({ id: "g", title: "g", goal: "g", steps: [{ goto: "/a" }, { goto: { url: "/b" } }] });
+    expect(j.steps.map((s) => s.url)).toEqual(["/a", "/b"]);
+  });
+});

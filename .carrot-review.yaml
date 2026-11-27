@@ -37,6 +37,7 @@ security:
   auto_fix: false           # true = draft a fix PR for confirmed Critical/High findings (needs ANTHROPIC_API_KEY)
   min_severity: Medium
   exclude:
+    - src/secure/demo.ts      # demo data: snippets of vulnerable code the posture page shows
     - "**/node_modules/**"
     - "**/dist/**"
     - "**/fixtures/**"

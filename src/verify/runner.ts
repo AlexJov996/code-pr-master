@@ -43,8 +43,32 @@ export function describeStep(s: Step): string {
     case "press": return `press "${s.value ?? ""}"${where ? ` on ${where}` : ""}`;
     case "wait": return `wait ${s.value ?? "0"}ms`;
     case "expect_no_errors": return "expect no errors";
-    default: return `${s.action} "${s.value ?? ""}"`;
+    default: return `${s.action} "${s.value ?? t?.text ?? ""}"`;
   }
+}
+
+/** A step URL resolved against the app under test. Absolute URLs must stay on that origin: the bot's browser never visits anything else. */
+export function resolveUrl(baseUrl: string, u: string): string {
+  const base = new URL(baseUrl);
+  const target = /^https?:\/\//.test(u) ? new URL(u) : new URL(u.startsWith("/") ? u : `/${u}`, base);
+  if (target.origin !== base.origin) throw new Error(`Refusing to navigate to ${target.origin}: journeys may only visit the application's own origin (${base.origin}).`);
+  return target.href;
+}
+
+/** Does `href` satisfy an `expect_url` of `want`? A path matches itself and its children; a full URL matches by prefix. */
+export function urlMatches(want: string, href: string): boolean {
+  if (/^https?:\/\//.test(want)) return href.startsWith(want);
+  const path = new URL(href).pathname;
+  const base = want.replace(/\/+$/, "");
+  if (base === "") return path === "/";
+  return path === base || path.startsWith(`${base}/`);
+}
+
+/** The text an expect_text / expect_not_text step looks for: its value, or a text target. */
+export function expectedText(step: Step): string {
+  const text = step.value ?? step.target?.text;
+  if (!text) throw new Error(`The ${step.action} step needs the text to look for (value or target.text).`);
+  return text;
 }
 
 function locate(page: Page, t: Target | undefined): Locator {
@@ -70,7 +94,7 @@ async function visibleText(page: Page, max = 600): Promise<string> {
 interface Counters { consoleErrors: number; pageErrors: number; serverErrors: number }
 
 async function execute(page: Page, step: Step, baseUrl: string, timeout: number, counters: Counters, since: Counters): Promise<void> {
-  const url = (u: string) => (/^https?:\/\//.test(u) ? u : baseUrl.replace(/\/$/, "") + (u.startsWith("/") ? u : `/${u}`));
+  const url = (u: string) => resolveUrl(baseUrl, u);
   switch (step.action) {
     case "goto": await page.goto(url(step.url ?? "/"), { timeout, waitUntil: "load" }); return;
     case "click": await locate(page, step.target).click({ timeout }); await page.waitForLoadState("load", { timeout }).catch(() => {}); return;
@@ -80,19 +104,21 @@ async function execute(page: Page, step: Step, baseUrl: string, timeout: number,
     case "check": await locate(page, step.target).check({ timeout }); return;
     case "expect_visible": await locate(page, step.target).waitFor({ state: "visible", timeout }); return;
     case "expect_text": {
-      try { await page.getByText(step.value ?? "", { exact: false }).first().waitFor({ state: "visible", timeout }); }
-      catch { throw new Error(`Expected text "${step.value ?? ""}" to be visible. Page shows: ${await visibleText(page)}`); }
+      const text = expectedText(step);
+      try { await page.getByText(text, { exact: false }).first().waitFor({ state: "visible", timeout }); }
+      catch { throw new Error(`Expected text "${text}" to be visible. Page shows: ${await visibleText(page)}`); }
       return;
     }
     case "expect_not_text": {
-      const l = page.getByText(step.value ?? "", { exact: false }).first();
+      const text = expectedText(step);
+      const l = page.getByText(text, { exact: false }).first();
       await page.waitForTimeout(Math.min(500, timeout));
-      if (await l.isVisible().catch(() => false)) throw new Error(`Expected text "${step.value ?? ""}" to be absent, but it is visible.`);
+      if (await l.isVisible().catch(() => false)) throw new Error(`Expected text "${text}" to be absent, but it is visible.`);
       return;
     }
     case "expect_url": {
-      const want = step.value ?? "/";
-      try { await page.waitForURL((u) => u.pathname === want || u.pathname.startsWith(want.replace(/\/$/, "") + "/") || u.href.startsWith(want), { timeout }); }
+      const want = step.value ?? step.url ?? "/";
+      try { await page.waitForURL((u) => urlMatches(want, u.href), { timeout }); }
       catch { throw new Error(`Expected URL ${want}, but the page is at ${page.url()}.`); }
       return;
     }

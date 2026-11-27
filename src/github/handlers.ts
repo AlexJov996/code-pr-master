@@ -32,7 +32,9 @@ export async function handlePullRequest(payload: PullRequestPayload, deps: Handl
   if (!payload.installation) { log("pull_request event without installation; ignoring"); return; }
   const ref: PullRef = { owner: payload.repository.owner.login, repo: payload.repository.name, number: payload.pull_request.number };
   const octokit = await deps.getOctokit(payload.installation.id);
-  const config = await deps.loadConfig(octokit, { ...ref, ref: payload.pull_request.head.sha });
+  // The head of a pull request is the author's code, so its config could point the bot at any URL or turn on auto-fix.
+  // Behaviour comes from the base branch: what the repository has already merged.
+  const config = await deps.loadConfig(octokit, { ...ref, ref: payload.pull_request.base.ref });
   const auto = config.reviews.auto_review;
   if (!auto.enabled) { log(`auto review disabled for ${ref.owner}/${ref.repo}#${ref.number}`); return; }
   if (payload.pull_request.draft && !auto.drafts) { log(`skipping draft ${ref.owner}/${ref.repo}#${ref.number}`); return; }
@@ -93,7 +95,6 @@ export async function handleIssueComment(payload: IssueCommentPayload, deps: Han
     const config = await deps.loadConfig(octokit, { ...ref, ref: "HEAD" });
     const run = command === "review" ? deps.runReview : command === "explain" ? deps.runExplain : command === "scan" ? deps.runScan : deps.runVerify;
     if (run) await run(octokit, ref, config);
-    else if (command === "verify") await deps.postComment(octokit, ref, verifySetupText());
     else await deps.postComment(octokit, ref, `The ${command} command is not enabled on this deployment.`);
     return;
   }

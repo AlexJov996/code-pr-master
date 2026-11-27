@@ -14,7 +14,12 @@ function stepFromShorthand(raw: unknown): Step {
   const [action, v] = entries[0]!;
   if (!(ACTIONS as readonly string[]).includes(action)) throw new Error(`Unknown step action "${action}". Known actions: ${ACTIONS.join(", ")}`);
   const step: Step = { action: action as Step["action"] };
-  if (action === "goto") { step.url = String(v); return step; }
+  if (action === "goto") {
+    const url = v && typeof v === "object" ? (v as Record<string, unknown>).url : v;
+    if (typeof url !== "string" || !url) throw new Error(`A goto step needs a URL string, got: ${JSON.stringify(v)}`);
+    step.url = url;
+    return step;
+  }
   if (v === true || v === null || v === undefined) return step;
   if (typeof v !== "object") { step.value = String(v); return step; }
   const o = v as Record<string, unknown>;

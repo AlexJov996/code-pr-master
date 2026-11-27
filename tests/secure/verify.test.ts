@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { SecurityFinding } from "../../src/secure/schema.js";
-import { applyVerification, heuristicReachability, verifyFindings } from "../../src/secure/verify.js";
+import { applyVerification, excerpt, heuristicReachability, verifyFindings } from "../../src/secure/verify.js";
 
 const base: SecurityFinding = {
   id: "f1", ruleId: "ssrf-user-url", category: "Server side", title: "User-supplied URL is fetched server-side.",
@@ -68,5 +68,14 @@ describe("verifyFindings", () => {
     const out = await verifyFindings([base], { verify: async () => { throw new Error("boom"); } });
     expect(out.kept).toHaveLength(1);
     expect(out.kept[0]!.verification.verdict).toBe("Needs review");
+  });
+});
+
+describe("excerpt", () => {
+  test("returns the whole file numbered when it is small, and a window around the line when it is large", () => {
+    expect(excerpt("a\nb\nc", 2)).toBe("    1 | a\n    2 | b\n    3 | c");
+    const big = Array.from({ length: 500 }, (_, i) => `line ${i + 1}`).join("\n");
+    const w = excerpt(big, 250, 3, 1000);
+    expect(w).toBe("  247 | line 247\n  248 | line 248\n  249 | line 249\n  250 | line 250\n  251 | line 251\n  252 | line 252\n  253 | line 253");
   });
 });
