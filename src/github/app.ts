@@ -6,6 +6,7 @@ import { EXPLAIN_MARKER, renderExplainMarkdown } from "../understand/render.js";
 import { ChangeStackOutputSchema } from "../understand/schema.js";
 import { runPullRequestScan } from "../secure/pipeline.js";
 import { createSecurityDeps } from "../secure/index.js";
+import { runPullRequestVerify } from "../verify/pipeline.js";
 import type { Config } from "../core/config.js";
 import { reviewChanges, type Generate } from "../core/review.js";
 import type { HandlerDeps } from "./handlers.js";
@@ -26,6 +27,10 @@ export interface PipelineOptions {
   generateFor?: (config: Config) => Generate;
   modelOverride?: string;
   log?: (msg: string) => void;
+  /** Where Verify stores runs and evidence. */
+  runsDir?: string;
+  /** Public URL of this server, used to link run pages from comments. */
+  serverUrl?: string;
 }
 
 /** fetch → review → publish, the whole bot in one function. */
@@ -71,6 +76,15 @@ export function createRunScan(opts: PipelineOptions = {}): NonNullable<HandlerDe
   };
 }
 
+/** Agentic QA on a pull request: journeys from the saved file plus generated scenarios, run against config.verify.base_url. */
+export function createRunVerify(opts: PipelineOptions = {}): NonNullable<HandlerDeps["runVerify"]> {
+  const log = opts.log ?? ((m) => console.log(m));
+  return async (octokit, ref, config) => {
+    const { run } = await runPullRequestVerify(octokit, ref, config, { model: opts.modelOverride ?? config.model, runsDir: opts.runsDir ?? ".carrot-review/verify", serverUrl: opts.serverUrl, log });
+    if (run) log(`${ref.owner}/${ref.repo}#${ref.number}: verify ${run.summary.failed} bug(s), ${run.summary.passed} passed`);
+  };
+}
+
 export function createPostComment(): HandlerDeps["postComment"] {
   return async (octokit, ref, body) => {
     await octokit.issues.createComment({ owner: ref.owner, repo: ref.repo, issue_number: ref.number, body });
@@ -84,6 +98,7 @@ export function createHandlerDeps(creds: AppCredentials, opts: PipelineOptions =
     runReview: createRunReview(opts),
     runExplain: createRunExplain(opts),
     runScan: createRunScan(opts),
+    runVerify: createRunVerify(opts),
     postComment: createPostComment(),
     log: opts.log,
   };

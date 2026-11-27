@@ -168,3 +168,28 @@ describe("scan command", () => {
     expect(log).toEqual(["review"]);
   });
 });
+
+describe("verify command", () => {
+  test("parseCommand recognises verify", () => {
+    expect(parseCommand("@carrot-review verify")).toBe("verify");
+  });
+
+  test("handleIssueComment runs verify, or explains the setup when it is not configured", async () => {
+    const log: string[] = [];
+    const d: HandlerDeps = {
+      getOctokit: async () => ({}) as any,
+      loadConfig: async () => DEFAULT_CONFIG,
+      runReview: async () => {},
+      runVerify: async () => { log.push("verify"); },
+      postComment: async (_o, _r, body) => { log.push(`comment:${body.slice(0, 30)}`); },
+    };
+    const payload = { action: "created", installation: { id: 5 }, repository: { name: "platform", owner: { login: "acme" } }, issue: { number: 482, pull_request: { url: "x" } }, comment: { body: "@carrot-review verify", user: { type: "User", login: "casey" } } };
+    await handleIssueComment(payload, d);
+    expect(log).toEqual(["verify"]);
+    expect(helpText()).toContain("@carrot-review verify");
+    const none = { ...d, runVerify: undefined };
+    log.length = 0;
+    await handleIssueComment(payload, none);
+    expect(log[0]).toMatch(/^comment:/);
+  });
+});

@@ -6,6 +6,11 @@ import { renderExplainMarkdown, renderExplainPage } from "../understand/render.j
 import type { ChangeStackOutput } from "../understand/schema.js";
 import type { StructuredGenerate } from "../core/claude.js";
 import { buildPosture, renderPosturePage, renderScanMarkdown } from "../secure/posture.js";
+import { promises as fs } from "node:fs";
+import { join, resolve, extname } from "node:path";
+import { renderVerifyMarkdown, renderVerifyPage } from "../verify/report.js";
+import type { VerifyRun } from "../verify/schema.js";
+import { escapeHtml } from "../triage/board.js";
 import type { ScanResult } from "../secure/schema.js";
 import { applyView, BUILT_IN_VIEWS, countsByView, groupByPriority, resolveView, type SavedView, type TriageItem } from "../triage/views.js";
 
@@ -28,6 +33,11 @@ export interface SecureDeps {
   load: (repo: string) => Promise<{ result: ScanResult; totalFiles?: Record<string, number> } | undefined>;
 }
 
+export interface VerifyDeps {
+  /** Directory holding one sub-directory per run, each with run.json and its evidence files. */
+  runsDir: string;
+}
+
 export interface ServerDeps {
   webhookSecret: string;
   onPullRequest: (payload: any) => Promise<void>;
@@ -35,6 +45,7 @@ export interface ServerDeps {
   triage?: TriageDeps;
   explain?: ExplainDeps;
   secure?: SecureDeps;
+  verify?: VerifyDeps;
   log?: (msg: string) => void;
 }
 
@@ -134,6 +145,55 @@ export function createApp(deps: ServerDeps) {
       const d = await prepare(c.req.query("repo"));
       if (d.status !== 200) return c.text(d.status === 400 ? "Pass ?repo=owner/name" : "No scan stored", d.status);
       return c.text(renderScanMarkdown(d.result, { repo: d.repo }), 200, { "content-type": "text/markdown; charset=utf-8" });
+    });
+  }
+
+  if (deps.verify) {
+    const runsDir = resolve(deps.verify.runsDir);
+    const RUN_ID = /^[\w.-]+$/;
+    const loadRun = async (id: string | undefined): Promise<VerifyRun | undefined> => {
+      if (!id || !RUN_ID.test(id)) return undefined;
+      try { return JSON.parse(await fs.readFile(join(runsDir, id, "run.json"), "utf8")) as VerifyRun; } catch { return undefined; }
+    };
+    const listRuns = async (): Promise<VerifyRun[]> => {
+      let names: string[] = [];
+      try { names = await fs.readdir(runsDir); } catch { return []; }
+      const runs = await Promise.all(names.map((n) => loadRun(n)));
+      return runs.filter((r): r is VerifyRun => Boolean(r)).sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+    };
+    const MIME: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg", ".webm": "video/webm", ".json": "application/json", ".txt": "text/plain; charset=utf-8", ".md": "text/markdown; charset=utf-8" };
+
+    app.get("/verify", async (c) => {
+      const id = c.req.query("run");
+      if (id) {
+        const run = await loadRun(id);
+        if (!run) return c.text("No such run", 404);
+        return c.html(renderVerifyPage(run, { artifactBase: `/verify/artifacts/${encodeURIComponent(run.id)}` }));
+      }
+      const runs = await listRuns();
+      const rows = runs.map((r) => `<li><a href="/verify?run=${encodeURIComponent(r.id)}">${escapeHtml(r.id)}</a> · ${r.summary.failed} bug${r.summary.failed === 1 ? "" : "s"} · ${r.summary.passed} passed${r.summary.blocked ? ` · ${r.summary.blocked} blocked` : ""} · ${escapeHtml(r.baseUrl)}${r.revision ? ` @ ${escapeHtml(r.revision)}` : ""} · ${escapeHtml(r.startedAt)}</li>`).join("");
+      return c.html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Verify runs</title><style>body{font:14px system-ui;background:#0b0d12;color:#e6e8ee;margin:40px auto;max-width:900px}a{color:#ff7a1a}li{padding:6px 0;border-bottom:1px solid #232838}</style></head><body><h1>Verify runs</h1>${rows ? `<ul>${rows}</ul>` : "<p>No runs yet. Run <code>carrot-review verify run</code> or <code>carrot-review verify demo</code>.</p>"}</body></html>`);
+    });
+
+    app.get("/verify/artifacts/:run/*", async (c) => {
+      const id = c.req.param("run");
+      const rest = c.req.path.slice(`/verify/artifacts/${id}/`.length).split("/").map((s) => decodeURIComponent(s));
+      if (!RUN_ID.test(id) || rest.some((s) => s === ".." || s === "" || s.includes("\\"))) return c.text("bad path", 400);
+      const file = resolve(runsDir, id, ...rest);
+      if (!file.startsWith(resolve(runsDir, id) + "/")) return c.text("bad path", 400);
+      try {
+        const data = await fs.readFile(file);
+        return c.body(data, 200, { "content-type": MIME[extname(file)] ?? "application/octet-stream", "cache-control": "private, max-age=3600" });
+      } catch { return c.text("not found", 404); }
+    });
+
+    app.get("/api/verify.json", async (c) => {
+      const run = await loadRun(c.req.query("run"));
+      return run ? c.json(run) : c.json({ error: "No such run" }, 404);
+    });
+    app.get("/api/verify.md", async (c) => {
+      const run = await loadRun(c.req.query("run"));
+      return run ? c.text(renderVerifyMarkdown(run), 200, { "content-type": "text/markdown; charset=utf-8" }) : c.text("No such run", 404);
     });
   }
 

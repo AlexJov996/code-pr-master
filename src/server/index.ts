@@ -27,12 +27,14 @@ const localConfig = (() => {
   return DEFAULT_CONFIG;
 })();
 
+const verifyRunsDir = process.env.CARROT_VERIFY_RUNS ?? ".carrot-review/verify";
+
 // Review bot: needs the GitHub App credentials. Skipped (with a warning) when they are absent so the Triage board can run alone.
 const hasApp = Boolean(process.env.GITHUB_APP_ID && process.env.GITHUB_PRIVATE_KEY && process.env.GITHUB_WEBHOOK_SECRET);
 const deps = hasApp
   ? createHandlerDeps(
       { appId: required("GITHUB_APP_ID"), privateKey: required("GITHUB_PRIVATE_KEY").replace(/\\n/g, "\n") },
-      { modelOverride: process.env.CARROT_MODEL, log },
+      { modelOverride: process.env.CARROT_MODEL, log, runsDir: verifyRunsDir, serverUrl: process.env.CARROT_PUBLIC_URL },
     )
   : undefined;
 if (!deps) log("GitHub App credentials not set; the webhook endpoint will reject every delivery.");
@@ -67,6 +69,8 @@ const secure: SecureDeps = {
     : async (repo) => loadStoredScan(process.cwd(), repo),
 };
 
+const verify = { runsDir: verifyRunsDir };
+
 const app = createApp({
   webhookSecret: process.env.GITHUB_WEBHOOK_SECRET ?? "unset",
   onPullRequest: (p) => (deps ? handlePullRequest(p, deps) : Promise.resolve()),
@@ -74,10 +78,11 @@ const app = createApp({
   triage,
   explain,
   secure,
+  verify,
   log: (m) => console.error(`[carrot-review] ${m}`),
 });
 
 const port = Number(process.env.PORT ?? 3000);
 serve({ fetch: app.fetch, port }, (info) => {
-  log(`listening on http://localhost:${info.port} (webhook: POST /api/webhooks/github${triage ? `, board: GET /triage?repo=owner/name, explain: GET /explain?repo=owner/name&pr=N, security: GET /secure?repo=owner/name${demo ? " [demo data]" : ""}` : ""})`);
+  log(`listening on http://localhost:${info.port} (webhook: POST /api/webhooks/github${triage ? `, board: GET /triage?repo=owner/name, explain: GET /explain?repo=owner/name&pr=N, security: GET /secure?repo=owner/name, verify: GET /verify${demo ? " [demo data]" : ""}` : ""})`);
 });

@@ -16,12 +16,23 @@ import { createTriageLoader, savedViewsFrom } from "../triage/index.js";
 import { applyView, groupByPriority, resolveView } from "../triage/views.js";
 import { diffCommandFor, exitCodeFor, parseRepo, type FailOn } from "./options.js";
 import { createSecurityDeps } from "../secure/index.js";
-import { collectLocalFiles } from "../secure/local.js";
 import { runDeepScan } from "../secure/pipeline.js";
 import { buildPosture, renderPosturePage, renderScanMarkdown } from "../secure/posture.js";
 import { scanDiff } from "../secure/scan.js";
 import { SEVERITY_RANK, type SecSeverity } from "../secure/schema.js";
 import { saveScan } from "../secure/store.js";
+import { serve } from "@hono/node-server";
+import { createDemoShop } from "../verify/demo-app.js";
+import { DEMO_JOURNEYS } from "../verify/demo.js";
+import { discoverJourneys } from "../verify/discover.js";
+import { prepareEnvironment } from "../verify/environment.js";
+import { generatePullRequestScenarios } from "../verify/generate.js";
+import { journeysToYaml, parseJourneys } from "../verify/journeys.js";
+import { createExplainFinding } from "../verify/pipeline.js";
+import { renderVerifyMarkdown, renderVerifyPage } from "../verify/report.js";
+import { runJourneys } from "../verify/runner.js";
+import { JourneysOutputSchema } from "../verify/schema.js";
+import { collectLocalFiles } from "../secure/local.js";
 
 function loadLocalConfig(cwd: string): Config {
   for (const name of CONFIG_FILENAMES) {
@@ -169,6 +180,110 @@ secure
     const failOn = String(opts.failOn).toLowerCase();
     const threshold: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
     if (failOn in threshold && result.findings.some((f) => SEVERITY_RANK[f.severity as SecSeverity] <= threshold[failOn]!)) process.exit(1);
+  });
+
+const verify = program.command("verify").description("Agentic QA: generate user journeys, run them in a real browser, inspect evidence, hand failures to a coding agent.");
+
+verify
+  .command("discover [dir]")
+  .description("Analyze a checkout, discover routes, and propose user journeys to review and save.")
+  .option("-o, --out <file>", "write the journeys YAML here (default: the configured journeys_file)")
+  .option("--heuristic", "skip the model even with a credential")
+  .option("-C, --cwd <dir>", "directory holding .carrot-review.yaml", process.cwd())
+  .action(async (dir: string | undefined, opts) => {
+    const cwd = resolve(opts.cwd);
+    const config = loadLocalConfig(cwd);
+    const local = await collectLocalFiles(resolve(cwd, dir ?? "."), { exclude: config.security.exclude });
+    const generate = !opts.heuristic && hasAnthropicCredential() ? createStructuredGenerate(createDefaultClient(), { model: config.model }, JourneysOutputSchema) : undefined;
+    console.error(`[carrot-review] analyzing ${local.files.length} files with ${generate ? config.model : "route heuristics"}…`);
+    const { routes, journeys } = await discoverJourneys(local.files, generate);
+    console.error(`[carrot-review] ${routes.length} routes, ${journeys.length} journeys proposed`);
+    const out = resolve(cwd, opts.out ?? config.verify.journeys_file);
+    const { mkdirSync } = await import("node:fs");
+    mkdirSync(resolve(out, ".."), { recursive: true });
+    writeFileSync(out, journeysToYaml(journeys));
+    console.log(`Wrote ${journeys.length} journeys to ${out}. Review and refine them, then run: carrot-review verify run --url <app>`);
+  });
+
+verify
+  .command("run")
+  .description("Run journeys against a running application (or start it with --setup) and report bugs with evidence.")
+  .option("-u, --url <baseUrl>", "base URL of the application (overrides config)")
+  .option("-j, --journeys <file>", "journeys YAML (default: the configured journeys_file)")
+  .option("--only <ids>", "comma-separated journey ids to run")
+  .option("--diff <file>", "also generate scenarios for this diff ('-' for stdin)")
+  .option("--setup", "install, start and wait for the app using verify.setup from the config")
+  .option("--headed", "show the browser")
+  .option("--out <dir>", "where to store runs", ".carrot-review/verify")
+  .option("--revision <sha>", "tested revision label (default: git HEAD)")
+  .option("--json", "print the run as JSON")
+  .option("--html <file>", "write the run page to a file")
+  .option("--fail-on-bugs", "exit 1 when any scenario fails")
+  .option("-C, --cwd <dir>", "directory holding .carrot-review.yaml", process.cwd())
+  .action(async (opts) => {
+    const cwd = resolve(opts.cwd);
+    const config = loadLocalConfig(cwd);
+    const log = (m: string) => console.error(`[carrot-review] ${m}`);
+    const journeysPath = resolve(cwd, opts.journeys ?? config.verify.journeys_file);
+    let journeys = existsSync(journeysPath) ? parseJourneys(readFileSync(journeysPath, "utf8")) : [];
+    if (opts.diff) {
+      const diff = readDiff({ diff: opts.diff }, cwd);
+      const generate = hasAnthropicCredential() ? createStructuredGenerate(createDefaultClient(), { model: config.model }, JourneysOutputSchema) : undefined;
+      const local = await collectLocalFiles(cwd, { exclude: config.security.exclude });
+      const { routes } = await discoverJourneys(local.files);
+      const generated = await generatePullRequestScenarios({ title: opts.title ?? "", description: "", diff, routes, existing: journeys }, generate);
+      log(`generated ${generated.length} scenarios for the diff`);
+      journeys = [...generated, ...journeys];
+    }
+    if (opts.only) { const ids = new Set(String(opts.only).split(",")); journeys = journeys.filter((j) => ids.has(j.id)); }
+    if (!journeys.length) { console.error("No journeys to run. Use `carrot-review verify discover .` first, or pass --journeys."); process.exit(2); }
+
+    let env: Awaited<ReturnType<typeof prepareEnvironment>> | undefined;
+    let baseUrl: string = opts.url ?? config.verify.base_url;
+    if (opts.setup) {
+      const s = config.verify.setup;
+      if (!s.start) { console.error("verify.setup.start is not configured."); process.exit(2); }
+      env = await prepareEnvironment({ install: s.install || undefined, start: s.start, readyUrl: s.ready_url || baseUrl, readyTimeoutMs: s.ready_timeout_ms, cwd, log });
+      baseUrl = baseUrl || env.baseUrl;
+    }
+    if (!baseUrl) { console.error("No base URL: pass --url, set verify.base_url, or use --setup with verify.setup.ready_url."); process.exit(2); }
+
+    let revision = opts.revision as string | undefined;
+    if (!revision) { try { revision = git(cwd, ["rev-parse", "--short", "HEAD"]).trim(); } catch { /* not a repo */ } }
+    try {
+      const run = await runJourneys(journeys, { baseUrl, outDir: resolve(cwd, opts.out), headless: !opts.headed && config.verify.headless, revision, explain: createExplainFinding(config.model), log });
+      if (opts.html) { writeFileSync(resolve(cwd, opts.html), renderVerifyPage(run, { artifactBase: run.dir! })); log(`wrote ${opts.html}`); }
+      console.log(opts.json ? JSON.stringify(run, null, 2) : renderVerifyMarkdown(run));
+      log(`evidence in ${run.dir}`);
+      if (opts.failOnBugs && run.summary.failed + run.summary.blocked > 0) process.exitCode = 1;
+    } finally {
+      await env?.stop();
+    }
+  });
+
+verify
+  .command("demo")
+  .description("Start the built-in demo shop (with two planted bugs), run the demo journeys against it, and report.")
+  .option("--out <dir>", "where to store runs", ".carrot-review/verify")
+  .option("--headed", "show the browser")
+  .option("--keep", "keep the demo shop running after the run (prints its URL)")
+  .option("-C, --cwd <dir>", "working directory", process.cwd())
+  .action(async (opts) => {
+    const cwd = resolve(opts.cwd);
+    const log = (m: string) => console.error(`[carrot-review] ${m}`);
+    const app = createDemoShop();
+    const server = await new Promise<{ close: () => void; url: string }>((resolveStart) => {
+      const srv = serve({ fetch: app.fetch, port: 0 }, (info) => resolveStart({ close: () => srv.close(), url: `http://127.0.0.1:${info.port}` }));
+    });
+    log(`demo shop running at ${server.url}`);
+    try {
+      const run = await runJourneys(DEMO_JOURNEYS, { baseUrl: server.url, outDir: resolve(cwd, opts.out), headless: !opts.headed, revision: "demo", log });
+      console.log(renderVerifyMarkdown(run));
+      log(`evidence in ${run.dir}; open the server's /verify?run=${run.id} to inspect it`);
+      if (opts.keep) { log("demo shop kept running; press Ctrl+C to stop"); await new Promise(() => {}); }
+    } finally {
+      if (!opts.keep) server.close();
+    }
   });
 
 program

@@ -1,6 +1,6 @@
 # carrot-review
 
-Four of CodeRabbit's products, rebuilt: **Review**, a GitHub App that reviews every pull request with a walkthrough, a changes table, pre-merge checks and line-anchored findings (plus a CLI that runs the same engine on a local diff); **Triage**, a board that scores, ranks and routes a repository's open pull requests; **Explain** (their "Understand" pillar), a Change Stack walkthrough that splits a large diff into ordered layers with what to read first, blast radius context and an architecture diagram; and **Secure**, a Map, Hunt, Verify security scanner with PR scans, deep scans, verified findings, drafted fix PRs and a posture map.
+All five of CodeRabbit's products, rebuilt: **Review**, a GitHub App that reviews every pull request with a walkthrough, a changes table, pre-merge checks and line-anchored findings (plus a CLI that runs the same engine on a local diff); **Triage**, a board that scores, ranks and routes a repository's open pull requests; **Explain** (their "Understand" pillar), a Change Stack walkthrough that splits a large diff into ordered layers with what to read first, blast radius context and an architecture diagram; **Secure**, a Map, Hunt, Verify security scanner with PR scans, deep scans, verified findings, drafted fix PRs and a posture map; and **Verify**, agentic QA that generates user journeys, runs them in a real browser, keeps recordings, screenshots and logs as evidence, and hands failures to a coding agent.
 
 The output format follows what CodeRabbit posts on public pull requests: a sticky summary comment (walkthrough, grouped changes, effort estimate, pre-merge checks) and inline comments of the form `category | severity | effort`, a one-line title, an explanation, a proposed fix diff, and a self-contained prompt for coding agents.
 
@@ -13,6 +13,7 @@ The output format follows what CodeRabbit posts on public pull requests: a stick
 | CLI | `src/cli/`, `bin/carrot-review.js` | `review` (default) reviews a branch, staged or working-tree diff (or a diff file) and prints the report; `--fail-on` makes it a CI gate. `triage owner/name` prints the board. |
 | Explain | `src/understand/` | Splits a diff into ordered layers with dependencies and risks, summarizes the regions worth reading with a complexity rating, detects symbol-level changes, computes blast radius, and draws a Mermaid architecture diagram. Uses Claude when a credential exists and a path-based heuristic otherwise. Posted with `@carrot-review explain`, served at `/explain`, printed by `carrot-review explain`. |
 | Secure | `src/secure/` | Map: pattern rules for secrets, injection, SSRF, code execution, TLS, weak crypto, HTML sinks, JWT and prompt injection. Hunt: Claude traces attack paths across files (IDOR, prompt injection into tools, logic flaws, injection chains, SSRF, races). Verify: reachability, exploitability and blast radius cap or reject every finding. Fixes are drafted and opened as PRs. PR scans post inline; deep scans feed the posture map at `/secure`. |
+| Verify | `src/verify/` | Declarative journeys (goal, steps, expected outcome) in YAML. Discovers routes and proposes journeys from a checkout; generates PR scenarios from the diff; runs them with Playwright in the local Chrome with a screenshot per step, a recording per journey, console and network logs; turns failures into findings with expected, observed and developer guidance; packages a repair handoff for a coding agent; can install, start and wait for the app first. `@carrot-review verify`, `/verify`, `carrot-review verify discover|run|demo`. |
 | Triage | `src/triage/` | Collects open pull requests from GitHub, scores each for priority (P0 to P3), risk, review depth, blast radius, complexity and effort, decides the next action, explains why in one line, and suggests reviewers from CODEOWNERS. Served as a board at `/triage` and as JSON at `/api/triage.json`. |
 
 ## Quick start (CLI)
@@ -126,6 +127,42 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
 
+## Verify (agentic QA)
+
+```bash
+pnpm review verify demo                     # built-in shop with two planted bugs; finds both, passes the negative case
+pnpm review verify discover .               # propose journeys from routes (and the model, if a key is set) → .carrot-review/journeys.yaml
+pnpm review verify run --url http://localhost:4000
+pnpm review verify run --setup              # install, start and wait for the app using verify.setup, then run
+pnpm review verify run --diff change.patch  # add scenarios generated for a diff
+pnpm review verify run --fail-on-bugs --json
+```
+
+Journeys are plain YAML you can review and edit:
+
+```yaml
+journeys:
+  - id: checkout-with-coupon
+    title: Checkout with a coupon
+    goal: Complete an order with a valid discount.
+    expected: The order total and the recorded charge both equal $80.
+    steps:
+      - goto: /
+      - click: { role: button, name: Add to cart }
+      - fill: { label: Coupon code, value: SAVE20 }
+      - click: { role: button, name: Apply }
+      - expect_text: "−$20.00"
+      - click: { role: button, name: Place order }
+      - expect_url: /checkout/confirmation
+      - expect_text: "Charged $80.00"
+```
+
+Actions: `goto`, `click`, `fill`, `press`, `select`, `check`, `expect_text`, `expect_not_text`, `expect_url`, `expect_visible`, `expect_no_errors`, `wait`. Targets use role and name, text, label, placeholder, test id or, as a last resort, a CSS selector.
+
+Every run is stored under `.carrot-review/verify/<run id>/` with `run.json`, a screenshot after each step, a `recording.webm` per journey and the logs. The server lists runs at `/verify` and shows one at `/verify?run=<id>`: scenarios on the left, the finding with expected, observed and guidance, Recording, Screenshots and Logs tabs, and a copyable repair handoff for a coding agent. In a pull request, `@carrot-review verify` runs the saved journeys plus generated scenarios against `verify.base_url` and posts the report; without a base URL it replies with setup instructions. Set `CARROT_PUBLIC_URL` so the comment can link to the run page.
+
+The browser is your local Chrome or Chromium (`CARROT_CHROME` to point at another executable).
+
 ## Configuration
 
 Put a `.carrot-review.yaml` at the repository root. The GitHub App reads it from the pull request head; the CLI reads it from the working directory. Every key is optional.
@@ -160,6 +197,13 @@ security:
   auto_fix: false
   min_severity: Medium
   exclude: ["**/node_modules/**", "**/dist/**"]
+verify:
+  base_url: http://localhost:4000
+  journeys_file: .carrot-review/journeys.yaml
+  setup:
+    install: pnpm install
+    start: pnpm dev
+    ready_url: http://localhost:4000/
 ```
 
 Profiles map to severity thresholds: `quiet` posts only Critical and Major findings, `chill` drops Nitpicks, `assertive` posts everything.
@@ -173,6 +217,6 @@ pnpm typecheck   # tsc --noEmit
 
 The model call is injected (`Generate` in `src/core/review.ts`), so the whole pipeline is tested without an API key. `src/core/claude.ts` is the only file that talks to Anthropic.
 
-## Not built yet
+## Not built
 
-Review, Triage, Explain and Secure are in. CodeRabbit's remaining products (Verify, the IDE extension, GitLab support) are not.
+All five products are in. The IDE extension and GitLab support are not.

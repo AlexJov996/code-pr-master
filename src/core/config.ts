@@ -56,6 +56,21 @@ export const ConfigSchema = z.object({
       saved_views: z.array(SavedViewConfig).default([]),
     })
     .prefault({}),
+  verify: z
+    .object({
+      base_url: z.string().default(""),
+      journeys_file: z.string().default(".carrot-review/journeys.yaml"),
+      headless: z.boolean().default(true),
+      setup: z
+        .object({
+          install: z.string().default(""),
+          start: z.string().default(""),
+          ready_url: z.string().default(""),
+          ready_timeout_ms: z.number().int().positive().default(60000),
+        })
+        .prefault({}),
+    })
+    .prefault({}),
   security: z
     .object({
       pr_scans: z.boolean().default(true),

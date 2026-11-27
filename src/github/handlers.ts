@@ -11,6 +11,8 @@ export interface HandlerDeps {
   runExplain?: (octokit: OctokitLike, ref: PullRef, config: Config) => Promise<void>;
   /** Security scan of the pull request diff; runs after the review when PR scans are enabled. */
   runScan?: (octokit: OctokitLike, ref: PullRef, config: Config) => Promise<void>;
+  /** Agentic QA: run journeys against the configured application and post the results. */
+  runVerify?: (octokit: OctokitLike, ref: PullRef, config: Config) => Promise<void>;
   postComment: (octokit: OctokitLike, ref: PullRef, body: string) => Promise<void>;
   log?: (msg: string) => void;
 }
@@ -42,7 +44,7 @@ export async function handlePullRequest(payload: PullRequestPayload, deps: Handl
   if (config.security.pr_scans && deps.runScan) await deps.runScan(octokit, ref, config);
 }
 
-export type Command = "review" | "explain" | "scan" | "help" | "unknown";
+export type Command = "review" | "explain" | "scan" | "verify" | "help" | "unknown";
 
 /** Find `@carrot-review <command>` anywhere in a comment; undefined when the bot is not mentioned. */
 export function parseCommand(body: string): Command | undefined {
@@ -52,6 +54,7 @@ export function parseCommand(body: string): Command | undefined {
   if (/^(full\s+)?review\b/.test(words) || words === "") return "review";
   if (/^explain\b/.test(words)) return "explain";
   if (/^(security\s+)?scan\b/.test(words)) return "scan";
+  if (/^verify\b/.test(words)) return "verify";
   if (/^help\b/.test(words)) return "help";
   return "unknown";
 }
@@ -63,6 +66,7 @@ export function helpText(): string {
     `- \`@${BOT_NAME} review\`: review the latest commit of this pull request.`,
     `- \`@${BOT_NAME} explain\`: post a Change Stack walkthrough: layers, what to read first, and an architecture diagram.`,
     `- \`@${BOT_NAME} scan\`: run a security scan of the changed lines and post verified findings inline.`,
+    `- \`@${BOT_NAME} verify\`: generate user journeys for this change and test them against the running application.`,
     `- \`@${BOT_NAME} help\`: show this message.`,
     "",
     "Configure reviews with a `.carrot-review.yaml` at the repository root (profile, path filters, path instructions, tone).",
@@ -85,13 +89,31 @@ export async function handleIssueComment(payload: IssueCommentPayload, deps: Han
   if (!command || !payload.installation) return;
   const ref: PullRef = { owner: payload.repository.owner.login, repo: payload.repository.name, number: payload.issue.number };
   const octokit = await deps.getOctokit(payload.installation.id);
-  if (command === "review" || command === "explain" || command === "scan") {
+  if (command === "review" || command === "explain" || command === "scan" || command === "verify") {
     const config = await deps.loadConfig(octokit, { ...ref, ref: "HEAD" });
-    const run = command === "review" ? deps.runReview : command === "explain" ? deps.runExplain : deps.runScan;
+    const run = command === "review" ? deps.runReview : command === "explain" ? deps.runExplain : command === "scan" ? deps.runScan : deps.runVerify;
     if (run) await run(octokit, ref, config);
+    else if (command === "verify") await deps.postComment(octokit, ref, verifySetupText());
     else await deps.postComment(octokit, ref, `The ${command} command is not enabled on this deployment.`);
     return;
   }
   const body = command === "help" ? helpText() : `I did not recognise that command.\n\n${helpText()}`;
   await deps.postComment(octokit, ref, body);
+}
+
+/** Posted when verify is requested but the repository has no test environment configured. */
+export function verifySetupText(): string {
+  return [
+    "**Verify is not set up for this repository yet.**",
+    "",
+    "Add a `verify` section to `.carrot-review.yaml` so the bot knows where the application runs:",
+    "",
+    "```yaml",
+    "verify:",
+    "  base_url: https://preview.example.com   # or a URL reachable from the bot",
+    "  journeys_file: .carrot-review/journeys.yaml",
+    "```",
+    "",
+    "Then generate journeys with `carrot-review verify discover .` and review them before committing the file.",
+  ].join("\n");
 }

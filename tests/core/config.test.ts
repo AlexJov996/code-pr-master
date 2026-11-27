@@ -116,3 +116,20 @@ describe("security config", () => {
     expect(cfg.security.exclude).toEqual(["legacy/**"]);
   });
 });
+
+describe("verify config", () => {
+  test("defaults", () => {
+    const cfg = parseConfig("");
+    expect(cfg.verify.base_url).toBe("");
+    expect(cfg.verify.journeys_file).toBe(".carrot-review/journeys.yaml");
+    expect(cfg.verify.headless).toBe(true);
+    expect(cfg.verify.setup).toEqual({ install: "", start: "", ready_url: "", ready_timeout_ms: 60000 });
+  });
+
+  test("overrides including setup commands", () => {
+    const cfg = parseConfig("verify:\n  base_url: http://localhost:4000\n  setup:\n    install: pnpm install\n    start: pnpm dev\n    ready_url: http://localhost:4000/healthz\n");
+    expect(cfg.verify.base_url).toBe("http://localhost:4000");
+    expect(cfg.verify.setup.start).toBe("pnpm dev");
+    expect(cfg.verify.setup.ready_timeout_ms).toBe(60000);
+  });
+});

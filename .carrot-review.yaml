@@ -40,3 +40,11 @@ security:
     - "**/node_modules/**"
     - "**/dist/**"
     - "**/fixtures/**"
+verify:
+  base_url: ""              # URL of the running app the bot tests; empty = @carrot-review verify replies with setup instructions
+  journeys_file: .carrot-review/journeys.yaml
+  headless: true
+  setup:
+    install: ""             # e.g. pnpm install
+    start: ""               # e.g. pnpm dev
+    ready_url: ""           # e.g. http://localhost:3000/
