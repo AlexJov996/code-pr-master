@@ -9,6 +9,8 @@ export interface HandlerDeps {
   runReview: (octokit: OctokitLike, ref: PullRef, config: Config) => Promise<void>;
   /** Post a Change Stack walkthrough; optional so a review-only deployment still works. */
   runExplain?: (octokit: OctokitLike, ref: PullRef, config: Config) => Promise<void>;
+  /** Security scan of the pull request diff; runs after the review when PR scans are enabled. */
+  runScan?: (octokit: OctokitLike, ref: PullRef, config: Config) => Promise<void>;
   postComment: (octokit: OctokitLike, ref: PullRef, body: string) => Promise<void>;
   log?: (msg: string) => void;
 }
@@ -37,9 +39,10 @@ export async function handlePullRequest(payload: PullRequestPayload, deps: Handl
     return;
   }
   await deps.runReview(octokit, ref, config);
+  if (config.security.pr_scans && deps.runScan) await deps.runScan(octokit, ref, config);
 }
 
-export type Command = "review" | "explain" | "help" | "unknown";
+export type Command = "review" | "explain" | "scan" | "help" | "unknown";
 
 /** Find `@carrot-review <command>` anywhere in a comment; undefined when the bot is not mentioned. */
 export function parseCommand(body: string): Command | undefined {
@@ -48,6 +51,7 @@ export function parseCommand(body: string): Command | undefined {
   const words = (m[1] ?? "").trim().toLowerCase();
   if (/^(full\s+)?review\b/.test(words) || words === "") return "review";
   if (/^explain\b/.test(words)) return "explain";
+  if (/^(security\s+)?scan\b/.test(words)) return "scan";
   if (/^help\b/.test(words)) return "help";
   return "unknown";
 }
@@ -58,6 +62,7 @@ export function helpText(): string {
     "",
     `- \`@${BOT_NAME} review\`: review the latest commit of this pull request.`,
     `- \`@${BOT_NAME} explain\`: post a Change Stack walkthrough: layers, what to read first, and an architecture diagram.`,
+    `- \`@${BOT_NAME} scan\`: run a security scan of the changed lines and post verified findings inline.`,
     `- \`@${BOT_NAME} help\`: show this message.`,
     "",
     "Configure reviews with a `.carrot-review.yaml` at the repository root (profile, path filters, path instructions, tone).",
@@ -80,11 +85,11 @@ export async function handleIssueComment(payload: IssueCommentPayload, deps: Han
   if (!command || !payload.installation) return;
   const ref: PullRef = { owner: payload.repository.owner.login, repo: payload.repository.name, number: payload.issue.number };
   const octokit = await deps.getOctokit(payload.installation.id);
-  if (command === "review" || command === "explain") {
+  if (command === "review" || command === "explain" || command === "scan") {
     const config = await deps.loadConfig(octokit, { ...ref, ref: "HEAD" });
-    if (command === "review") await deps.runReview(octokit, ref, config);
-    else if (deps.runExplain) await deps.runExplain(octokit, ref, config);
-    else await deps.postComment(octokit, ref, "The explain command is not enabled on this deployment.");
+    const run = command === "review" ? deps.runReview : command === "explain" ? deps.runExplain : deps.runScan;
+    if (run) await run(octokit, ref, config);
+    else await deps.postComment(octokit, ref, `The ${command} command is not enabled on this deployment.`);
     return;
   }
   const body = command === "help" ? helpText() : `I did not recognise that command.\n\n${helpText()}`;

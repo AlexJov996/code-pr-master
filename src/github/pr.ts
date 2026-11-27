@@ -17,6 +17,7 @@ export interface PullRequestData extends PullRef {
   description: string;
   diff: string;
   headSha: string;
+  headRef: string;
   baseRef: string;
   isDraft: boolean;
   author: string;
@@ -36,6 +37,7 @@ export async function fetchPullRequest(octokit: OctokitLike, ref: PullRef): Prom
     description: pr.body ?? "",
     diff: diff.data as unknown as string,
     headSha: pr.head.sha,
+    headRef: pr.head.ref,
     baseRef: pr.base.ref,
     isDraft: Boolean(pr.draft),
     author: pr.user?.login ?? "",

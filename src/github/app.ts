@@ -4,6 +4,8 @@ import { createClaudeGenerate, createDefaultClient, createStructuredGenerate, ha
 import { explainChanges } from "../understand/explain.js";
 import { EXPLAIN_MARKER, renderExplainMarkdown } from "../understand/render.js";
 import { ChangeStackOutputSchema } from "../understand/schema.js";
+import { runPullRequestScan } from "../secure/pipeline.js";
+import { createSecurityDeps } from "../secure/index.js";
 import type { Config } from "../core/config.js";
 import { reviewChanges, type Generate } from "../core/review.js";
 import type { HandlerDeps } from "./handlers.js";
@@ -58,6 +60,17 @@ export function createRunExplain(opts: PipelineOptions = {}): NonNullable<Handle
   };
 }
 
+/** PR security scan: Map/Hunt/Verify over the diff, optional auto-fix, sticky comment and inline findings. */
+export function createRunScan(opts: PipelineOptions = {}): NonNullable<HandlerDeps["runScan"]> {
+  const log = opts.log ?? ((m) => console.log(m));
+  return async (octokit, ref, config) => {
+    const label = `${ref.owner}/${ref.repo}#${ref.number}`;
+    const deps = createSecurityDeps({ model: opts.modelOverride ?? config.model, log });
+    const { result } = await runPullRequestScan(octokit as any, ref, config, deps);
+    log(`${label}: security scan posted ${result.findings.length} finding${result.findings.length === 1 ? "" : "s"} (${result.rejected.length} rejected)`);
+  };
+}
+
 export function createPostComment(): HandlerDeps["postComment"] {
   return async (octokit, ref, body) => {
     await octokit.issues.createComment({ owner: ref.owner, repo: ref.repo, issue_number: ref.number, body });
@@ -70,6 +83,7 @@ export function createHandlerDeps(creds: AppCredentials, opts: PipelineOptions =
     loadConfig: loadRepoConfig,
     runReview: createRunReview(opts),
     runExplain: createRunExplain(opts),
+    runScan: createRunScan(opts),
     postComment: createPostComment(),
     log: opts.log,
   };

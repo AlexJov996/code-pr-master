@@ -98,3 +98,21 @@ triage:
     expect(() => parseConfig("triage:\n  saved_views:\n    - id: x\n      name: X\n      filter:\n        risk: [Huge]\n")).toThrow(/risk/);
   });
 });
+
+describe("security config", () => {
+  test("defaults: PR scans on, auto-fix off, minimum severity Medium, standard excludes", () => {
+    const cfg = parseConfig("");
+    expect(cfg.security.pr_scans).toBe(true);
+    expect(cfg.security.auto_fix).toBe(false);
+    expect(cfg.security.min_severity).toBe("Medium");
+    expect(cfg.security.exclude).toContain("**/node_modules/**");
+  });
+
+  test("overrides", () => {
+    const cfg = parseConfig("security:\n  pr_scans: false\n  auto_fix: true\n  min_severity: High\n  exclude: ['legacy/**']\n");
+    expect(cfg.security.pr_scans).toBe(false);
+    expect(cfg.security.auto_fix).toBe(true);
+    expect(cfg.security.min_severity).toBe("High");
+    expect(cfg.security.exclude).toEqual(["legacy/**"]);
+  });
+});

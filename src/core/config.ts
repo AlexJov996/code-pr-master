@@ -56,6 +56,14 @@ export const ConfigSchema = z.object({
       saved_views: z.array(SavedViewConfig).default([]),
     })
     .prefault({}),
+  security: z
+    .object({
+      pr_scans: z.boolean().default(true),
+      auto_fix: z.boolean().default(false),
+      min_severity: z.enum(["Critical", "High", "Medium", "Low"]).default("Medium"),
+      exclude: z.array(z.string()).default(["**/node_modules/**", "**/dist/**", "**/build/**", "**/vendor/**", "**/.git/**", "**/coverage/**"]),
+    })
+    .prefault({}),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

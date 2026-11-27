@@ -9,7 +9,10 @@ import { createDefaultClient, createStructuredGenerate, hasAnthropicCredential }
 import { fetchPullRequest } from "../github/pr.js";
 import { DEMO_EXPLAIN_INPUT } from "../understand/demo.js";
 import { ChangeStackOutputSchema } from "../understand/schema.js";
-import { createApp, type ExplainDeps, type TriageDeps } from "./app.js";
+import { createApp, type ExplainDeps, type SecureDeps, type TriageDeps } from "./app.js";
+import { DEMO_SECURE_FILES, DEMO_SECURE_TOTALS } from "../secure/demo.js";
+import { runDeepScan } from "../secure/pipeline.js";
+import { loadStoredScan } from "../secure/store.js";
 
 const log = (m: string) => console.log(`[carrot-review] ${m}`);
 
@@ -58,16 +61,23 @@ const explain: ExplainDeps | undefined = demo || process.env.GITHUB_TOKEN
     }
   : undefined;
 
+const secure: SecureDeps = {
+  load: demo
+    ? async () => ({ result: await runDeepScan(DEMO_SECURE_FILES, localConfig, {}), totalFiles: DEMO_SECURE_TOTALS })
+    : async (repo) => loadStoredScan(process.cwd(), repo),
+};
+
 const app = createApp({
   webhookSecret: process.env.GITHUB_WEBHOOK_SECRET ?? "unset",
   onPullRequest: (p) => (deps ? handlePullRequest(p, deps) : Promise.resolve()),
   onIssueComment: (p) => (deps ? handleIssueComment(p, deps) : Promise.resolve()),
   triage,
   explain,
+  secure,
   log: (m) => console.error(`[carrot-review] ${m}`),
 });
 
 const port = Number(process.env.PORT ?? 3000);
 serve({ fetch: app.fetch, port }, (info) => {
-  log(`listening on http://localhost:${info.port} (webhook: POST /api/webhooks/github${triage ? `, board: GET /triage?repo=owner/name, explain: GET /explain?repo=owner/name&pr=N${demo ? " [demo data]" : ""}` : ""})`);
+  log(`listening on http://localhost:${info.port} (webhook: POST /api/webhooks/github${triage ? `, board: GET /triage?repo=owner/name, explain: GET /explain?repo=owner/name&pr=N, security: GET /secure?repo=owner/name${demo ? " [demo data]" : ""}` : ""})`);
 });

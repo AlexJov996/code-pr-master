@@ -15,6 +15,13 @@ import { renderTerminalBoard } from "../triage/board.js";
 import { createTriageLoader, savedViewsFrom } from "../triage/index.js";
 import { applyView, groupByPriority, resolveView } from "../triage/views.js";
 import { diffCommandFor, exitCodeFor, parseRepo, type FailOn } from "./options.js";
+import { createSecurityDeps } from "../secure/index.js";
+import { collectLocalFiles } from "../secure/local.js";
+import { runDeepScan } from "../secure/pipeline.js";
+import { buildPosture, renderPosturePage, renderScanMarkdown } from "../secure/posture.js";
+import { scanDiff } from "../secure/scan.js";
+import { SEVERITY_RANK, type SecSeverity } from "../secure/schema.js";
+import { saveScan } from "../secure/store.js";
 
 function loadLocalConfig(cwd: string): Config {
   for (const name of CONFIG_FILENAMES) {
@@ -117,6 +124,51 @@ program
     }
     if (opts.json) console.log(JSON.stringify({ stack: result.stack, overview: result.overview, layerStats: result.layerStats, semantic: result.semantic }, null, 2));
     else if (!opts.html) console.log(renderExplainMarkdown(result));
+  });
+
+const secure = program.command("secure").description("Security scanning: deep scans of a checkout and PR-style scans of a diff.");
+secure
+  .command("scan [dir]")
+  .description("Map (patterns) → Hunt (model) → Verify (reachability, exploitability, blast radius). Scans a directory, or a diff with --diff.")
+  .option("-d, --diff <file>", "scan the added lines of a unified diff instead of a directory ('-' for stdin)")
+  .option("-b, --base <ref>", "with --diff-from-git: base ref to diff against", "main")
+  .option("--diff-from-git", "scan the diff of the current branch against --base")
+  .option("--min-severity <level>", "Critical, High, Medium or Low (overrides config)")
+  .option("--heuristic", "patterns and path heuristics only; skip the model even with a credential")
+  .option("--repo <owner/name>", "label for the report and the stored scan", "local/checkout")
+  .option("--save", "store the scan under .carrot-review/security/ so the server can serve /secure")
+  .option("--json", "print JSON")
+  .option("--html <file>", "write the posture page to a file")
+  .option("--fail-on <level>", "exit 1 when a kept finding is at or above: critical, high, medium, low, none", "none")
+  .option("-C, --cwd <dir>", "directory holding .carrot-review.yaml", process.cwd())
+  .action(async (dir: string | undefined, opts) => {
+    const cwd = resolve(opts.cwd);
+    let config = loadLocalConfig(cwd);
+    if (opts.minSeverity) config = { ...config, security: { ...config.security, min_severity: opts.minSeverity } };
+    const deps = createSecurityDeps({ model: config.model, heuristic: Boolean(opts.heuristic), log: (m) => console.error(`[carrot-review] ${m}`) });
+    console.error(`[carrot-review] scanning with ${deps.hunt ? config.model : "patterns and heuristics (no Anthropic credential or --heuristic)"}…`);
+
+    let result;
+    let totalFiles: Record<string, number> | undefined;
+    if (opts.diff || opts.diffFromGit) {
+      const diff = opts.diff ? readDiff({ diff: opts.diff }, cwd) : git(cwd, ["diff", `${opts.base}...HEAD`]);
+      result = await scanDiff(diff, { hunt: deps.hunt, verify: deps.verify, minSeverity: config.security.min_severity });
+    } else {
+      const root = resolve(cwd, dir ?? ".");
+      const local = await collectLocalFiles(root, { exclude: config.security.exclude });
+      console.error(`[carrot-review] walking ${local.files.length} files (${local.skipped.length} skipped)`);
+      result = await runDeepScan(local.files, config, deps);
+      totalFiles = local.totalByArea;
+    }
+
+    if (opts.save) console.error(`[carrot-review] saved ${await saveScan(cwd, { repo: opts.repo, result, totalFiles })}`);
+    if (opts.html) { writeFileSync(resolve(cwd, opts.html), renderPosturePage(result, { repo: opts.repo, totalFiles })); console.error(`[carrot-review] wrote ${opts.html}`); }
+    if (opts.json) console.log(JSON.stringify({ repo: opts.repo, result, posture: buildPosture(result, { totalFiles }) }, null, 2));
+    else if (!opts.html) console.log(renderScanMarkdown(result, { repo: opts.repo }));
+
+    const failOn = String(opts.failOn).toLowerCase();
+    const threshold: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+    if (failOn in threshold && result.findings.some((f) => SEVERITY_RANK[f.severity as SecSeverity] <= threshold[failOn]!)) process.exit(1);
   });
 
 program

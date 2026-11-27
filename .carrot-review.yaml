@@ -32,3 +32,11 @@ triage:
       name: Agent-created PRs
       filter:
         tags: [Agent-created]
+security:
+  pr_scans: true            # scan the added lines of every reviewed PR and post verified findings inline
+  auto_fix: false           # true = draft a fix PR for confirmed Critical/High findings (needs ANTHROPIC_API_KEY)
+  min_severity: Medium
+  exclude:
+    - "**/node_modules/**"
+    - "**/dist/**"
+    - "**/fixtures/**"

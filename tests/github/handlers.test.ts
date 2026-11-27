@@ -127,3 +127,44 @@ describe("explain command", () => {
     expect(helpText()).toContain("@carrot-review explain");
   });
 });
+
+describe("scan command", () => {
+  test("parseCommand recognises scan and security scan", () => {
+    expect(parseCommand("@carrot-review scan")).toBe("scan");
+    expect(parseCommand("@carrot-review security scan")).toBe("scan");
+  });
+
+  test("handleIssueComment runs the security scan on the scan command", async () => {
+    const log: string[] = [];
+    const d: HandlerDeps = {
+      getOctokit: async () => ({}) as any,
+      loadConfig: async () => DEFAULT_CONFIG,
+      runReview: async () => { log.push("review"); },
+      runScan: async () => { log.push("scan"); },
+      postComment: async () => { log.push("comment"); },
+    };
+    await handleIssueComment({
+      action: "created", installation: { id: 5 }, repository: { name: "platform", owner: { login: "acme" } },
+      issue: { number: 482, pull_request: { url: "x" } }, comment: { body: "@carrot-review scan", user: { type: "User", login: "casey" } },
+    }, d);
+    expect(log).toEqual(["scan"]);
+    expect(helpText()).toContain("@carrot-review scan");
+  });
+
+  test("handlePullRequest also runs the scan when PR scans are enabled", async () => {
+    const log: string[] = [];
+    const d: HandlerDeps = {
+      getOctokit: async () => ({}) as any,
+      loadConfig: async () => DEFAULT_CONFIG,
+      runReview: async () => { log.push("review"); },
+      runScan: async () => { log.push("scan"); },
+      postComment: async () => {},
+    };
+    await handlePullRequest({ installation: { id: 5 }, repository: { name: "platform", owner: { login: "acme" } }, pull_request: { number: 1, draft: false, state: "open", head: { sha: "abc" }, base: { ref: "main" } }, action: "opened" }, d);
+    expect(log).toEqual(["review", "scan"]);
+    const off = { ...d, loadConfig: async () => parseConfig("security:\n  pr_scans: false\n") };
+    log.length = 0;
+    await handlePullRequest({ installation: { id: 5 }, repository: { name: "platform", owner: { login: "acme" } }, pull_request: { number: 1, draft: false, state: "open", head: { sha: "abc" }, base: { ref: "main" } }, action: "opened" }, off);
+    expect(log).toEqual(["review"]);
+  });
+});

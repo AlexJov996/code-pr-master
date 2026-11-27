@@ -1,6 +1,6 @@
 # carrot-review
 
-Three of CodeRabbit's products, rebuilt: **Review**, a GitHub App that reviews every pull request with a walkthrough, a changes table, pre-merge checks and line-anchored findings (plus a CLI that runs the same engine on a local diff); **Triage**, a board that scores, ranks and routes a repository's open pull requests; and **Explain** (their "Understand" pillar), a Change Stack walkthrough that splits a large diff into ordered layers with what to read first, blast radius context and an architecture diagram.
+Four of CodeRabbit's products, rebuilt: **Review**, a GitHub App that reviews every pull request with a walkthrough, a changes table, pre-merge checks and line-anchored findings (plus a CLI that runs the same engine on a local diff); **Triage**, a board that scores, ranks and routes a repository's open pull requests; **Explain** (their "Understand" pillar), a Change Stack walkthrough that splits a large diff into ordered layers with what to read first, blast radius context and an architecture diagram; and **Secure**, a Map, Hunt, Verify security scanner with PR scans, deep scans, verified findings, drafted fix PRs and a posture map.
 
 The output format follows what CodeRabbit posts on public pull requests: a sticky summary comment (walkthrough, grouped changes, effort estimate, pre-merge checks) and inline comments of the form `category | severity | effort`, a one-line title, an explanation, a proposed fix diff, and a self-contained prompt for coding agents.
 
@@ -12,6 +12,7 @@ The output format follows what CodeRabbit posts on public pull requests: a stick
 | GitHub App | `src/server/`, `src/github/` | Signature-verified webhook endpoint. Reviews on `opened`, `synchronize`, `reopened`, `ready_for_review`; answers `@carrot-review review` and `@carrot-review help` in PR comments. Posts one sticky summary comment and one review with inline comments. |
 | CLI | `src/cli/`, `bin/carrot-review.js` | `review` (default) reviews a branch, staged or working-tree diff (or a diff file) and prints the report; `--fail-on` makes it a CI gate. `triage owner/name` prints the board. |
 | Explain | `src/understand/` | Splits a diff into ordered layers with dependencies and risks, summarizes the regions worth reading with a complexity rating, detects symbol-level changes, computes blast radius, and draws a Mermaid architecture diagram. Uses Claude when a credential exists and a path-based heuristic otherwise. Posted with `@carrot-review explain`, served at `/explain`, printed by `carrot-review explain`. |
+| Secure | `src/secure/` | Map: pattern rules for secrets, injection, SSRF, code execution, TLS, weak crypto, HTML sinks, JWT and prompt injection. Hunt: Claude traces attack paths across files (IDOR, prompt injection into tools, logic flaws, injection chains, SSRF, races). Verify: reachability, exploitability and blast radius cap or reject every finding. Fixes are drafted and opened as PRs. PR scans post inline; deep scans feed the posture map at `/secure`. |
 | Triage | `src/triage/` | Collects open pull requests from GitHub, scores each for priority (P0 to P3), risk, review depth, blast radius, complexity and effort, decides the next action, explains why in one line, and suggests reviewers from CODEOWNERS. Served as a board at `/triage` and as JSON at `/api/triage.json`. |
 
 ## Quick start (CLI)
@@ -86,6 +87,45 @@ What it produces:
 - **Blast radius**: files, areas and security-sensitive paths for the whole change and per layer, with an attention list for reviewers.
 - **Architecture**: a Mermaid flowchart from the model's component edges, or from relative imports between changed files.
 
+## Secure
+
+```bash
+pnpm review secure scan .                        # deep scan of a checkout, Markdown report
+pnpm review secure scan . --save --repo acme/x   # store it so the server can serve /secure?repo=acme/x
+pnpm review secure scan --diff change.patch --fail-on high   # PR-style scan of added lines, CI gate
+pnpm review secure scan . --html posture.html
+pnpm review secure scan . --heuristic            # patterns and path heuristics only
+```
+
+Every reviewed pull request also gets a security scan of its added lines when `security.pr_scans` is on: one sticky comment plus inline findings. `@carrot-review scan` runs it on demand. With `security.auto_fix` on and an Anthropic credential, confirmed Critical and High findings get a drafted fix opened as a pull request against the PR branch; the fix is refused if the file changed since it was drafted.
+
+How a finding earns its place:
+
+1. **Map**: rule patterns find obvious sinks and secrets without a model.
+2. **Hunt**: Claude reads the files and reports only what it can explain as an attack, with the path from source to sink.
+3. **Verify**: each finding is judged on reachability (unreachable code, tests and docs cap at Low), exploitability (not exploitable means rejected, hard means one level down) and blast radius (high means one level up). Rejected findings stay visible in a collapsed section so the noise is auditable.
+
+Without a credential the scanner still runs Map and path-heuristic verification.
+
+Scheduled deep scans fit any scheduler. As a GitHub Actions workflow:
+
+```yaml
+name: security-deep-scan
+on:
+  schedule: [{ cron: "0 3 * * 1" }]
+  workflow_dispatch:
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm review secure scan . --repo ${{ github.repository }} --fail-on critical
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+```
+
 ## Configuration
 
 Put a `.carrot-review.yaml` at the repository root. The GitHub App reads it from the pull request head; the CLI reads it from the working directory. Every key is optional.
@@ -115,6 +155,11 @@ triage:
     - id: release-train
       name: Release train
       filter: { base_branches: ["release/*"] }
+security:
+  pr_scans: true
+  auto_fix: false
+  min_severity: Medium
+  exclude: ["**/node_modules/**", "**/dist/**"]
 ```
 
 Profiles map to severity thresholds: `quiet` posts only Critical and Major findings, `chill` drops Nitpicks, `assertive` posts everything.
@@ -122,7 +167,7 @@ Profiles map to severity thresholds: `quiet` posts only Critical and Major findi
 ## Development
 
 ```bash
-pnpm test        # vitest, 144 tests, no network
+pnpm test        # vitest, 193 tests, no network
 pnpm typecheck   # tsc --noEmit
 ```
 
@@ -130,4 +175,4 @@ The model call is injected (`Generate` in `src/core/review.ts`), so the whole pi
 
 ## Not built yet
 
-Review, Triage and Explain are in. CodeRabbit's other products (Secure, Verify, the IDE extension, GitLab support) are not.
+Review, Triage, Explain and Secure are in. CodeRabbit's remaining products (Verify, the IDE extension, GitLab support) are not.
