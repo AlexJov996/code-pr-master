@@ -1,0 +1,36 @@
+diff --git a/src/cache.ts b/src/cache.ts
+index 3b18e51..a1c2d3e 100644
+--- a/src/cache.ts
++++ b/src/cache.ts
+@@ -10,7 +10,9 @@ export async function updateProject(input: Input) {
+   const db = getDb();
+-  await db.project.update(input);
++  const result = await db.project.update(input);
++  await redis.del(`project:${input.id}`);
++  return result;
+ }
+ 
+ export function readProject(id: string) {
+@@ -30,2 +32,3 @@ export function readProject(id: string) {
+   return cache.get(id);
+ }
++export const VERSION = 2;
+diff --git a/README.md b/README.md
+new file mode 100644
+index 0000000..e69de29
+--- /dev/null
++++ b/README.md
+@@ -0,0 +1,2 @@
++# Project
++Hello
+diff --git a/old.txt b/old.txt
+deleted file mode 100644
+index 1234567..0000000
+--- a/old.txt
++++ /dev/null
+@@ -1,1 +0,0 @@
+-bye
+diff --git a/a.ts b/b.ts
+similarity index 100%
+rename from a.ts
+rename to b.ts

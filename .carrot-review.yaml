@@ -1,0 +1,19 @@
+# Review settings for this repository (read by the GitHub App at the PR head and by the CLI from the cwd).
+language: en-US
+tone_instructions: ""
+model: claude-opus-5-5
+reviews:
+  profile: chill            # chill | assertive | quiet
+  path_filters:
+    - "!**/*.lock"
+    - "!pnpm-lock.yaml"
+    - "!**/fixtures/**"
+  path_instructions:
+    - path: "src/core/**"
+      instructions: "This is the review engine. Flag anything that could post a comment on the wrong line or leak a secret into a prompt."
+    - path: "src/github/**"
+      instructions: "Check every GitHub API call handles 404 and 422 explicitly."
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches: []       # empty = every base branch; otherwise globs like "main", "release/*"
